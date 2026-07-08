@@ -1,0 +1,12 @@
+# Build from local source instead of pulling from Docker Hub.
+# Requires sibling repos ../orca and ../themis to be present.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up
+
+services:
+  orca:
+    build: ../orca
+
+  themis:
+    build: ../themis

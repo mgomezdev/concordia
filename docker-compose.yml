@@ -1,6 +1,12 @@
+# Pull from Docker Hub (default):
+#   docker compose up
+#
+# Build from local source (dev):
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up
+
 services:
   orca:
-    build: ../orca
+    image: ninjabuffalo/orca:latest
     volumes:
       - ../orca/config:/config
       - ../orca/data:/data
@@ -21,7 +27,7 @@ services:
     restart: unless-stopped
 
   themis:
-    build: ../themis
+    image: ninjabuffalo/themis:latest
     ports:
       - "${HOST_PORT:-8000}:8000"
     volumes:
