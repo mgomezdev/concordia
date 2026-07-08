@@ -1,7 +1,7 @@
 # Project Generate Workflow — Implementation Plan
 
 **Date:** 2026-07-04  
-**Status:** Pending approval  
+**Status:** Implemented — merged to `themis:main` 2026-07-07  
 **Scope:** Themis backend + frontend. Orca sidecar UUID-based pack + template cache already ship in Orca.  
 **Repos:** Changes land in `../themis` (backend + frontend) and `../orca` (if sidecar pack endpoint needs updates). No omnibus changes required.
 
