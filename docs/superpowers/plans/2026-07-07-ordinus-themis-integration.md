@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a "Send to Themis" flow that uploads Ordinus BOM STLs to the Themis library, creates a project with correct quantities, and opens the project in a new tab.
+**Goal:** Add a "Send to Themis" flow that uploads Ordinus BOM STLs to the Themis library, creates a project with correct quantities and bidirectional linking, and opens the project in a new tab — with the link persisting across page reloads.
 
-**Architecture:** Two repos change independently — Themis gets a dedup-on-upload behaviour and an optional-field schema fix; Ordinus gets a server-side Themis client, one new endpoint, and a frontend button. Tasks 1–2 are in `themis`; Tasks 3–6 are in `gridfinity-customizer`. Each task commits to its own repo.
+**Architecture:** Two repos change independently — Themis gets dedup-on-upload, optional project fields, and three new source columns on `Project`; Ordinus gets `themisProjectId` on `bom_generations`, a Themis HTTP client, one new endpoint that looks up the caller's username and writes both sides of the link, and a frontend button that pre-populates from the DB on load. Tasks 1–2 are in `themis`; Tasks 3–7 are in `gridfinity-customizer`. Each task commits to its own repo.
 
 **Tech Stack:** Python/FastAPI/SQLAlchemy (Themis); Node 24/Express/TypeScript + React/Vite (Ordinus)
 
@@ -169,20 +169,25 @@ git -C C:\Users\mgome\Documents\projects\themis commit -m "feat(files): dedup up
 
 ---
 
-## Task 2 — Themis: optional machine/process in ProjectCreate
+## Task 2 — Themis: project source fields + optional machine/process
 
 **Repos:** `C:\Users\mgome\Documents\projects\themis`
 
 **Files:**
-- Modify: `backend/app/api/routes/projects.py` — `ProjectCreate` schema
+- Modify: `backend/app/models.py` — add `source_app`, `source_user`, `source_layout_id` to `Project`; make `machine_uuid`/`process_uuid` nullable
+- Modify: `backend/app/database.py` — add `projects` entry to `_ALTERS`
+- Modify: `backend/app/api/routes/projects.py` — update `ProjectCreate`, `create_project`, `_project_dict`
+- Create: `backend/tests/api/test_projects_api.py`
 
 ### Background
 
-`machine_uuid` and `process_uuid` are required strings today. External callers (Ordinus) don't know slicer profile UUIDs, so the project must be creatable without them. The DB column is already nullable in practice (TEXT with no NOT NULL constraint in SQLite). Only the Pydantic schema needs to change.
+Three new nullable columns are added to `projects` for bidirectional traceability: `source_app` (e.g. `"ordinus"`), `source_user` (Ordinus username), `source_layout_id` (Ordinus layout pk). They are populated by the caller at creation time and returned in every project response.
 
-- [ ] **Step 1: Write a failing test**
+`machine_uuid` and `process_uuid` are required strings today. External callers (Ordinus) don't know slicer profile UUIDs, so the project must be creatable without them. The SQLAlchemy model must be updated to `Optional[str]` with `nullable=True`; the DB migration needs to handle existing databases where these columns were created as NOT NULL. We follow the same `CREATE TABLE ... _new / INSERT INTO / DROP / RENAME` pattern used in `database.py` for `job_printer_configs`.
 
-Create `backend/tests/api/test_projects_api.py` (the file does not yet exist):
+- [ ] **Step 1: Write failing tests**
+
+Create `backend/tests/api/test_projects_api.py`:
 
 ```python
 import pytest
@@ -199,20 +204,154 @@ async def test_create_project_without_machine_process(client):
     assert data["name"] == "Ordinus Import"
     assert data["machine_uuid"] is None
     assert data["process_uuid"] is None
+
+
+async def test_create_project_with_source_fields(client):
+    """Source fields are stored and returned on the project."""
+    resp = await client.post(
+        "/api/v1/projects",
+        json={
+            "name": "Ordinus Import",
+            "source_app": "ordinus",
+            "source_user": "alice",
+            "source_layout_id": 42,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["source_app"] == "ordinus"
+    assert data["source_user"] == "alice"
+    assert data["source_layout_id"] == 42
+
+
+async def test_create_project_source_fields_default_null(client):
+    """Source fields are null when not provided."""
+    resp = await client.post(
+        "/api/v1/projects",
+        json={"name": "Regular Project", "machine_uuid": "abc", "process_uuid": "def"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["source_app"] is None
+    assert data["source_user"] is None
+    assert data["source_layout_id"] is None
 ```
 
-- [ ] **Step 2: Run test to confirm it fails**
+- [ ] **Step 2: Run tests to confirm they fail**
 
 ```bash
 cd C:\Users\mgome\Documents\projects\themis\backend
-python -m pytest tests/api/ -k "test_create_project_without_machine_process" -v
+python -m pytest tests/api/test_projects_api.py -v
 ```
 
-Expected: FAIL with 422 (validation error — required fields missing).
+Expected: all three FAIL (422 on missing required fields; source fields not present in response).
 
-- [ ] **Step 3: Make machine_uuid and process_uuid optional**
+- [ ] **Step 3: Update `Project` model in `models.py`**
 
-In `backend/app/api/routes/projects.py`, update `ProjectCreate`:
+In `backend/app/models.py`, replace the `Project` class:
+
+```python
+class Project(Base):
+    __tablename__ = "projects"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    machine_uuid: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    process_uuid: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    result_file_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("uploaded_files.id", ondelete="SET NULL"), nullable=True
+    )
+    source_app: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    source_user: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    source_layout_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(32))
+    updated_at: Mapped[str] = mapped_column(String(32))
+```
+
+(`Integer` is already imported from `sqlalchemy` at the top of `models.py`.)
+
+- [ ] **Step 4: Add migration to `database.py`**
+
+In `backend/app/database.py`, add a `projects` entry to `_ALTERS`:
+
+```python
+_ALTERS: list[tuple[str, list[tuple[str, str]]]] = [
+    ("printers", [
+        ("loaded_filaments",         "JSON DEFAULT '[]'"),
+        ("queue_on",                 "BOOLEAN NOT NULL DEFAULT 1"),
+        ("build_plate_type",         "VARCHAR(100)"),
+        ("no_snapshots_while_idle",  "BOOLEAN NOT NULL DEFAULT 0"),
+    ]),
+    ("job_printer_configs", [
+        ("filament_id",    "INTEGER"),
+        ("filament_type",  "VARCHAR(100)"),
+        ("filament_color", "VARCHAR(20)"),
+        ("tool_index",     "INTEGER"),
+        ("filament_map",   "JSON"),
+    ]),
+    ("jobs", [
+        ("block_reason", "TEXT"),
+        ("order_id",     "INTEGER"),
+        ("overrides",    "JSON"),
+    ]),
+    ("uploaded_files", [
+        ("relative_path", "VARCHAR(1024) DEFAULT ''"),
+        ("folder",        "VARCHAR(1024) DEFAULT '/'"),
+        ("size_bytes",    "INTEGER DEFAULT 0"),
+        ("content_hash",  "VARCHAR(64) DEFAULT ''"),
+        ("mtime",         "FLOAT DEFAULT 0"),
+        ("missing",       "BOOLEAN NOT NULL DEFAULT 0"),
+    ]),
+    ("queue_config", [
+        ("operator_name",             "VARCHAR(120)"),
+        ("snapshot_interval_seconds", "INTEGER DEFAULT 2"),
+    ]),
+    ("projects", [
+        ("source_app",       "VARCHAR(50)"),
+        ("source_user",      "VARCHAR(255)"),
+        ("source_layout_id", "INTEGER"),
+    ]),
+]
+```
+
+Then in `_migrate`, after the existing `job_printer_configs` recreation block, add logic to make `machine_uuid`/`process_uuid` nullable in existing databases:
+
+```python
+    # machine_uuid/process_uuid changed to nullable; SQLite can't ALTER COLUMN so recreate.
+    proj_info = (await conn.execute(text("PRAGMA table_info(projects)"))).fetchall()
+    proj_cols = {row[1]: row[3] for row in proj_info}  # col_name → notnull
+    if proj_cols.get("machine_uuid", 0) == 1 or proj_cols.get("process_uuid", 0) == 1:
+        await conn.execute(text("""
+            CREATE TABLE projects_new (
+                id INTEGER NOT NULL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                machine_uuid VARCHAR(36),
+                process_uuid VARCHAR(36),
+                notes TEXT,
+                result_file_id INTEGER REFERENCES uploaded_files (id) ON DELETE SET NULL,
+                source_app VARCHAR(50),
+                source_user VARCHAR(255),
+                source_layout_id INTEGER,
+                created_at VARCHAR(32) NOT NULL,
+                updated_at VARCHAR(32) NOT NULL
+            )
+        """))
+        await conn.execute(text(
+            "INSERT INTO projects_new "
+            "(id, name, machine_uuid, process_uuid, notes, result_file_id, created_at, updated_at) "
+            "SELECT id, name, machine_uuid, process_uuid, notes, result_file_id, created_at, updated_at "
+            "FROM projects"
+        ))
+        await conn.execute(text("DROP TABLE projects"))
+        await conn.execute(text("ALTER TABLE projects_new RENAME TO projects"))
+```
+
+Place this block at the END of `_migrate`, after the `job_printer_configs` block.
+
+- [ ] **Step 5: Update `ProjectCreate`, `create_project`, and `_project_dict` in `routes/projects.py`**
+
+Update `ProjectCreate`:
 
 ```python
 class ProjectCreate(BaseModel):
@@ -220,24 +359,77 @@ class ProjectCreate(BaseModel):
     machine_uuid: Optional[str] = None
     process_uuid: Optional[str] = None
     notes: Optional[str] = None
+    source_app: Optional[str] = None
+    source_user: Optional[str] = None
+    source_layout_id: Optional[int] = None
 ```
 
-(`Optional` is already imported at the top of the file.)
+Update `create_project` to pass source fields to `Project()`:
 
-- [ ] **Step 4: Run all tests**
+```python
+@router.post("", status_code=201)
+async def create_project(
+    body: ProjectCreate,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    now = _now_iso()
+    proj = Project(
+        name=body.name,
+        machine_uuid=body.machine_uuid,
+        process_uuid=body.process_uuid,
+        notes=body.notes,
+        result_file_id=None,
+        source_app=body.source_app,
+        source_user=body.source_user,
+        source_layout_id=body.source_layout_id,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(proj)
+    await session.commit()
+    await session.refresh(proj)
+    return await _project_dict(proj, session)
+```
+
+Update `_project_dict` to include source fields:
+
+```python
+async def _project_dict(
+    project: Project,
+    session: AsyncSession,
+    catalog: dict | None = None,
+) -> dict:
+    items = await _load_items(session, project.id, catalog)
+    return {
+        "id": project.id,
+        "name": project.name,
+        "machine_uuid": project.machine_uuid,
+        "process_uuid": project.process_uuid,
+        "notes": project.notes,
+        "result_file_id": project.result_file_id,
+        "source_app": project.source_app,
+        "source_user": project.source_user,
+        "source_layout_id": project.source_layout_id,
+        "created_at": project.created_at,
+        "updated_at": project.updated_at,
+        "items": items,
+    }
+```
+
+- [ ] **Step 6: Run all tests**
 
 ```bash
 cd C:\Users\mgome\Documents\projects\themis\backend
 python -m pytest -v
 ```
 
-Expected: 457+ passed, 0 failed.
+Expected: 459+ passed, 0 failed.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git -C C:\Users\mgome\Documents\projects\themis add backend/app/api/routes/projects.py
-git -C C:\Users\mgome\Documents\projects\themis commit -m "feat(projects): make machine_uuid and process_uuid optional for external project creation"
+git -C C:\Users\mgome\Documents\projects\themis add backend/app/models.py backend/app/database.py backend/app/api/routes/projects.py backend/tests/api/test_projects_api.py
+git -C C:\Users\mgome\Documents\projects\themis commit -m "feat(projects): add source fields for bidirectional linking; make machine/process optional"
 ```
 
 ---
@@ -276,7 +468,7 @@ Append to `.env.development`:
 THEMIS_URL=http://localhost:8001
 ```
 
-- [ ] **Step 4: Verify server still starts**
+- [ ] **Step 4: Verify tests still pass**
 
 ```bash
 cd C:\Users\mgome\Documents\projects\gridfinity-customizer
@@ -296,7 +488,118 @@ git commit -m "feat(config): add optional THEMIS_URL for Themis integration"
 
 ---
 
-## Task 4 — Ordinus: Themis service
+## Task 4 — Ordinus: bidirectional schema
+
+**Repo:** `C:\Users\mgome\Documents\projects\gridfinity-customizer`
+
+**Files:**
+- Modify: `server/src/db/schema.ts` — add `themisProjectId` to `bomGenerations`
+- Modify: `server/src/db/migrate.ts` — add ALTER TABLE migration for new column
+- Modify: `shared/src/types.ts` — add `themisProjectId: number | null` to `ApiBomGeneration`
+- Modify: `server/src/services/bomGeneration.service.ts` — include `themisProjectId` in `RawGenRow` and `formatBomGeneration`
+
+### Background
+
+`bomGenerations.themisProjectId` stores the Themis project ID after a successful "Send to Themis". It is nullable (not every generation gets sent to Themis). Ordinus' hand-rolled migration in `migrate.ts` adds columns via `ALTER TABLE ... ADD COLUMN` in a try/catch block — same pattern as all other additive migrations in that file.
+
+The `formatBomGeneration` function maps DB row → `ApiBomGeneration` API shape. Adding `themisProjectId` here makes it available to every existing caller (`getGeneration`, `triggerGeneration` return value, controller responses).
+
+- [ ] **Step 1: Add `themisProjectId` to drizzle schema**
+
+In `server/src/db/schema.ts`, update the `bomGenerations` table definition:
+
+```typescript
+export const bomGenerations = sqliteTable('bom_generations', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  layoutId: integer('layout_id').notNull().unique().references(() => layouts.id, { onDelete: 'cascade' }),
+  status: text('status').notNull().default('pending'),
+  exportJson: text('export_json'),
+  fileManifest: text('file_manifest'),
+  threeMfPath: text('three_mf_path'),
+  generatedAt: text('generated_at'),
+  errorMessage: text('error_message'),
+  themisProjectId: integer('themis_project_id'),
+});
+```
+
+- [ ] **Step 2: Add migration in `migrate.ts`**
+
+At the end of `server/src/db/migrate.ts`, before the closing brace of `runMigrations`, add:
+
+```typescript
+  // Add themis_project_id to bom_generations if missing
+  try {
+    await client.execute(`ALTER TABLE bom_generations ADD COLUMN themis_project_id INTEGER;`);
+  } catch {
+    // Column already exists — ignore
+  }
+```
+
+- [ ] **Step 3: Update `ApiBomGeneration` in `shared/src/types.ts`**
+
+In `shared/src/types.ts`, update the `ApiBomGeneration` interface:
+
+```typescript
+export interface ApiBomGeneration {
+  id: number;
+  layoutId: number;
+  status: BomGenerationStatus;
+  fileManifest: BomGenerationManifestEntry[] | null;
+  threeMfPath: string | null;
+  generatedAt: string | null;
+  errorMessage: string | null;
+  themisProjectId: number | null;
+}
+```
+
+- [ ] **Step 4: Update `RawGenRow` and `formatBomGeneration` in `bomGeneration.service.ts`**
+
+In `server/src/services/bomGeneration.service.ts`, update the `RawGenRow` type:
+
+```typescript
+type RawGenRow = Pick<
+  typeof bomGenerations.$inferSelect,
+  'id' | 'layoutId' | 'status' | 'fileManifest' | 'threeMfPath' | 'generatedAt' | 'errorMessage' | 'themisProjectId'
+>;
+```
+
+Update `formatBomGeneration`:
+
+```typescript
+export function formatBomGeneration(row: RawGenRow): ApiBomGeneration {
+  return {
+    id: row.id,
+    layoutId: row.layoutId,
+    status: row.status as ApiBomGeneration['status'],
+    fileManifest: row.fileManifest ? (JSON.parse(row.fileManifest) as BomGenerationManifestEntry[]) : null,
+    threeMfPath: row.threeMfPath,
+    generatedAt: row.generatedAt,
+    errorMessage: row.errorMessage,
+    themisProjectId: row.themisProjectId ?? null,
+  };
+}
+```
+
+- [ ] **Step 5: Run tests and type-check**
+
+```bash
+cd C:\Users\mgome\Documents\projects\gridfinity-customizer
+npm run test:run
+npm run build
+```
+
+Expected: all tests pass, build succeeds with no type errors.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add server/src/db/schema.ts server/src/db/migrate.ts shared/src/types.ts server/src/services/bomGeneration.service.ts
+git commit -m "feat(bom): add themisProjectId to bom_generations for bidirectional linking"
+```
+
+---
+
+## Task 5 — Ordinus: Themis HTTP client
 
 **Repo:** `C:\Users\mgome\Documents\projects\gridfinity-customizer`
 
@@ -307,6 +610,8 @@ git commit -m "feat(config): add optional THEMIS_URL for Themis integration"
 ### Background
 
 This service is a thin HTTP client over Themis' REST API. It uses Node 24's native `fetch` and `FormData` — no new dependencies. All functions accept a `themisUrl` parameter so they're testable without environment coupling.
+
+`createThemisProject` accepts optional `sourceUser` and `sourceLayoutId` parameters that map to `source_user` and `source_layout_id` on the Themis project — completing the Themis-side bidirectional link.
 
 - [ ] **Step 1: Write failing tests**
 
@@ -359,6 +664,16 @@ describe('createThemisProject', () => {
     const body = JSON.parse(opts.body as string) as Record<string, unknown>;
     expect(body.name).toBe('My Layout');
     expect(body.notes).toBe('Imported from Ordinus');
+  });
+
+  it('includes source fields when provided', async () => {
+    global.fetch = mockFetch({ id: 7, name: 'My Layout' });
+    await createThemisProject(THEMIS, 'My Layout', 'Imported from Ordinus', 'alice', 42);
+    const [, opts] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(opts.body as string) as Record<string, unknown>;
+    expect(body.source_app).toBe('ordinus');
+    expect(body.source_user).toBe('alice');
+    expect(body.source_layout_id).toBe(42);
   });
 
   it('throws if Themis returns non-ok', async () => {
@@ -431,8 +746,18 @@ export async function createThemisProject(
   themisUrl: string,
   name: string,
   notes: string,
+  sourceUser?: string,
+  sourceLayoutId?: number,
 ): Promise<number> {
-  const data = await themisPost(`${themisUrl}/api/v1/projects`, { name, notes }) as { id: number };
+  const data = await themisPost(`${themisUrl}/api/v1/projects`, {
+    name,
+    notes,
+    ...(sourceUser !== undefined && {
+      source_app: 'ordinus',
+      source_user: sourceUser,
+      source_layout_id: sourceLayoutId,
+    }),
+  }) as { id: number };
   return data.id;
 }
 
@@ -459,7 +784,7 @@ cd C:\Users\mgome\Documents\projects\gridfinity-customizer
 npm run test:run -- --reporter=verbose server/src/services/themis.service.test.ts
 ```
 
-Expected: all 8 tests pass.
+Expected: all 9 tests pass.
 
 - [ ] **Step 5: Run full test suite**
 
@@ -473,32 +798,41 @@ Expected: all tests pass.
 
 ```bash
 git add server/src/services/themis.service.ts server/src/services/themis.service.test.ts
-git commit -m "feat(themis): add Themis HTTP client service (upload, create project, add item)"
+git commit -m "feat(themis): add Themis HTTP client service with bidirectional source field support"
 ```
 
 ---
 
-## Task 5 — Ordinus: send-to-themis endpoint
+## Task 6 — Ordinus: send-to-themis endpoint
 
 **Repo:** `C:\Users\mgome\Documents\projects\gridfinity-customizer`
 
 **Files:**
 - Create: `server/src/controllers/themis.controller.ts`
+- Create: `server/src/controllers/themis.controller.test.ts`
 - Modify: `server/src/routes/bom.routes.ts`
-- Modify: `server/src/app.ts` (not needed — route mounts under existing `/api/v1/bom`)
 
 ### Background
 
-The generation record stores the file manifest as `fileManifest` (JSON string). Individual STL files live at `{GENERATED_STL_DIR}/bom-layout-{layoutId}/{filename}`. The handler reads those files and uploads them, deduplicating via Themis. A layout slug (`my-layout`) derived from `layout.name` is used as the Themis subfolder name.
+The generation record stores the file manifest as `fileManifest` (JSON string). Individual STL files live at `{GENERATED_STL_DIR}/bom-layout-{layoutId}/{filename}`. The handler:
+1. Rejects if THEMIS_URL is unset (503).
+2. Looks up the Ordinus `users` table to get the caller's `username` (from `req.user.userId`).
+3. Uploads unique STLs with dedup via Themis.
+4. Creates a Themis project, passing `source_app = "ordinus"`, `source_user = username`, `source_layout_id = layoutId`.
+5. Adds items with correct quantities.
+6. **Writes the Themis project ID back** to `bomGenerations.themisProjectId` — completing the Ordinus side of the bidirectional link.
+7. Returns `{ data: { projectUrl } }` matching the `ApiResponse<T>` wrapper used everywhere in Ordinus.
 
 `BomGenerationManifestEntry` type from `@gridfinity/shared`:
 ```typescript
 { filename: string; widthUnits: number; heightUnits: number; customization: BinCustomization; qty: number }
 ```
 
+`layouts.name` (not `layouts.title`) is used for the layout name and folder slug.
+
 - [ ] **Step 1: Write failing test**
 
-Create `server/src/routes/generation.routes.test.ts` already exists — check it. Add a new test file `server/src/controllers/themis.controller.test.ts`:
+Create `server/src/controllers/themis.controller.test.ts`:
 
 ```typescript
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -523,17 +857,22 @@ vi.mock('../db/connection.js', () => ({
           limit: vi.fn().mockResolvedValue([
             {
               id: 1,
-              title: 'My Layout',
+              name: 'My Layout',
               userId: 1,
             },
           ]),
         }),
       }),
     }),
+    update: vi.fn().mockReturnValue({
+      set: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue(undefined),
+      }),
+    }),
   },
 }));
 
-vi.mock('../db/schema.js', () => ({ layouts: {}, bomGenerations: {} }));
+vi.mock('../db/schema.js', () => ({ layouts: {}, bomGenerations: {}, users: {} }));
 
 describe('sendToThemisHandler', () => {
   it('returns 503 when THEMIS_URL is not configured', async () => {
@@ -569,7 +908,7 @@ import { AppError, ErrorCodes } from '@gridfinity/shared';
 import type { BomGenerationManifestEntry } from '@gridfinity/shared';
 import type { Request, Response, NextFunction } from 'express';
 import { db } from '../db/connection.js';
-import { layouts, bomGenerations } from '../db/schema.js';
+import { layouts, bomGenerations, users } from '../db/schema.js';
 import { config } from '../config.js';
 import { uploadStlToThemis, createThemisProject, addThemisProjectItem } from '../services/themis.service.js';
 import { logger } from '../logger.js';
@@ -595,6 +934,11 @@ export async function sendToThemisHandler(req: Request, res: Response, next: Nex
     const layout = layoutRows[0];
     if (layout.userId !== req.user.userId) throw new AppError(ErrorCodes.FORBIDDEN, 'Not authorized');
 
+    // Look up the caller's username for Themis source_user field.
+    const userRows = await db.select({ username: users.username }).from(users)
+      .where(eq(users.id, req.user.userId)).limit(1);
+    const username = userRows.length ? userRows[0].username : undefined;
+
     const genRows = await db.select().from(bomGenerations).where(eq(bomGenerations.layoutId, layoutId)).limit(1);
     if (!genRows.length || genRows[0].status !== 'ready') {
       res.status(409).json({ error: { message: 'BOM generation is not ready' } });
@@ -609,7 +953,7 @@ export async function sendToThemisHandler(req: Request, res: Response, next: Nex
     const outDir = path.resolve(config.GENERATED_STL_DIR, `bom-layout-${layoutId}`);
     const folder = `/Gridfinity/${slugify(layout.name)}`;
 
-    // Upload unique STL files; collect filename → Themis file id mapping
+    // Upload unique STL files; collect filename → Themis file id mapping.
     const fileIdMap = new Map<string, number>();
     const seen = new Set<string>();
     for (const entry of manifest) {
@@ -621,7 +965,13 @@ export async function sendToThemisHandler(req: Request, res: Response, next: Nex
       logger.info({ filename: entry.filename, fileId }, 'Uploaded STL to Themis');
     }
 
-    const projectId = await createThemisProject(themisUrl, layout.name, 'Imported from Ordinus');
+    const projectId = await createThemisProject(
+      themisUrl,
+      layout.name,
+      'Imported from Ordinus',
+      username,
+      layoutId,
+    );
     logger.info({ projectId, layoutId }, 'Created Themis project');
 
     for (const entry of manifest) {
@@ -630,8 +980,13 @@ export async function sendToThemisHandler(req: Request, res: Response, next: Nex
       await addThemisProjectItem(themisUrl, projectId, fileId, entry.qty);
     }
 
+    // Write Themis project ID back to bom_generations for bidirectional link.
+    await db.update(bomGenerations)
+      .set({ themisProjectId: projectId })
+      .where(eq(bomGenerations.layoutId, layoutId));
+
     const projectUrl = `${themisUrl}/projects/${projectId}`;
-    res.status(200).json({ projectUrl });
+    res.status(200).json({ data: { projectUrl } });
   } catch (err) {
     next(err);
   }
@@ -640,16 +995,7 @@ export async function sendToThemisHandler(req: Request, res: Response, next: Nex
 
 - [ ] **Step 4: Register the route in bom.routes.ts**
 
-In `server/src/routes/bom.routes.ts`, add:
-
-```typescript
-import { sendToThemisHandler } from '../controllers/themis.controller.js';
-
-// add after existing routes:
-router.post('/send-to-themis/:layoutId', requireAuth, sendToThemisHandler);
-```
-
-Full file after edit:
+In `server/src/routes/bom.routes.ts`, add the import and route:
 
 ```typescript
 import { Router } from 'express';
@@ -680,12 +1026,12 @@ Expected: all tests pass.
 
 ```bash
 git add server/src/controllers/themis.controller.ts server/src/controllers/themis.controller.test.ts server/src/routes/bom.routes.ts
-git commit -m "feat(bom): add POST /bom/send-to-themis/:layoutId endpoint"
+git commit -m "feat(bom): add POST /bom/send-to-themis/:layoutId with bidirectional project link"
 ```
 
 ---
 
-## Task 6 — Ordinus: Send to Themis button
+## Task 7 — Ordinus: Send to Themis button
 
 **Repo:** `C:\Users\mgome\Documents\projects\gridfinity-customizer`
 
@@ -700,7 +1046,9 @@ git commit -m "feat(bom): add POST /bom/send-to-themis/:layoutId endpoint"
 The button has three visual states:
 - **idle**: "Send to Themis" (enabled when `isReady`)
 - **sending**: "Sending…" (disabled)
-- **sent**: replaced by a link "Open in Themis →"
+- **sent**: replaced by an anchor "Open in Themis →"
+
+**On load**, if `generation.themisProjectId` is already set (a previous send), the panel immediately shows "Open in Themis →" without a new send. The project URL is reconstructed from `VITE_THEMIS_URL` + `generation.themisProjectId`.
 
 Error falls back to the existing `error` string state already rendered by the panel.
 
@@ -724,14 +1072,6 @@ export async function sendToThemis(
   );
   return result.data;
 }
-```
-
-Note: `sendToThemis` returns `result.data` — but the controller returns `{ projectUrl }` directly (not wrapped in `{ data: ... }`). Fix the controller to match Ordinus' `ApiResponse` wrapper, or unwrap here. Looking at the controller — it returns `res.status(200).json({ projectUrl })` without the `data` wrapper. To stay consistent with every other API handler in Ordinus which uses `ApiResponse<T>`, update the controller:
-
-In `server/src/controllers/themis.controller.ts`, change the final response line to:
-
-```typescript
-res.status(200).json({ data: { projectUrl } });
 ```
 
 - [ ] **Step 2: Add VITE_THEMIS_URL to Vite env**
@@ -798,6 +1138,14 @@ export function BomGenerationPanel({ layoutId, layoutTitle, bomItems, accessToke
     return stopPolling;
   }, [generation?.status, fetchGeneration, stopPolling]);
 
+  // Pre-populate Themis link if a previous send is already recorded in the DB.
+  useEffect(() => {
+    if (generation?.themisProjectId && THEMIS_URL) {
+      setThemisProjectUrl(`${THEMIS_URL}/projects/${generation.themisProjectId}`);
+      setThemisState('sent');
+    }
+  }, [generation?.themisProjectId]);
+
   const handleGenerate = async () => {
     if (!layoutId || !accessToken) return;
     setLoading(true);
@@ -805,6 +1153,9 @@ export function BomGenerationPanel({ layoutId, layoutTitle, bomItems, accessToke
     try {
       const gen = await triggerBomGeneration(layoutId, bomItems, accessToken);
       setGeneration(gen);
+      // A new generation clears any existing Themis link.
+      setThemisState('idle');
+      setThemisProjectUrl(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Generation failed');
     } finally {
@@ -931,13 +1282,13 @@ Expected: all tests pass, build succeeds with no type errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/src/api/bomGeneration.api.ts app/src/components/BomGenerationPanel.tsx server/src/controllers/themis.controller.ts
-git commit -m "feat(bom-panel): add Send to Themis button with idle/sending/sent states"
+git add app/src/api/bomGeneration.api.ts app/src/components/BomGenerationPanel.tsx server/src/controllers/themis.controller.ts app/.env.development
+git commit -m "feat(bom-panel): add Send to Themis button; pre-populate link from stored themisProjectId"
 ```
 
 ---
 
-## Task 7 — Integration smoke test
+## Task 8 — Integration smoke test
 
 **Manual verification** — requires both services running.
 
@@ -965,14 +1316,21 @@ npm run dev
 4. Click **Send to Themis**.
 5. Confirm Themis project page opens in a new tab.
 6. In Themis, verify the project shows the correct items with quantities.
-7. Verify the files appear in the Themis library under `/Gridfinity/{layout-name}/`.
+7. Verify the project's detail page shows `source_app = ordinus`, `source_user = <your username>`, `source_layout_id = <layout ID>`.
+8. Verify the files appear in the Themis library under `/Gridfinity/{layout-name}/`.
 
-- [ ] **Step 3: Smoke test dedup**
+- [ ] **Step 3: Smoke test bidirectional link persistence**
 
-1. Click **Send to Themis** again on the same layout.
-2. Confirm a second project is created but no duplicate files appear in the Themis library.
+1. Refresh the Ordinus layout page.
+2. Confirm the **"Open in Themis →"** link is already shown (not the "Send to Themis" button) — because `generation.themisProjectId` was persisted to the DB.
+3. Click the link — it should open the same Themis project that was created in Step 2.
 
-- [ ] **Step 4: Commit Themis branch and Ordinus branch**
+- [ ] **Step 4: Smoke test dedup**
+
+1. Click **Regenerate** in Ordinus to clear `themisProjectId`, then generate again and click **Send to Themis**.
+2. Confirm a second Themis project is created but no duplicate files appear in the Themis library under the same folder.
+
+- [ ] **Step 5: Log both branch summaries and merge**
 
 ```bash
 # Themis

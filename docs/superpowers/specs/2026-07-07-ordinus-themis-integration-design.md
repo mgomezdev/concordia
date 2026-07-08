@@ -41,6 +41,28 @@ Scoping to the target folder (not the whole library) means:
 
 Ordinus always targets `/Gridfinity/{layout-slug}`. The folder scoping is enforced by Ordinus; Themis stays general-purpose.
 
+### Bidirectional linking
+
+Every "Send to Themis" creates a durable link in both directions:
+
+**Themis → Ordinus reference** — three columns added to the `projects` table:
+
+| Column | Type | Value |
+|---|---|---|
+| `source_app` | `VARCHAR(50)` | `"ordinus"` |
+| `source_user` | `VARCHAR(255)` | Ordinus username (looked up from `users` table) |
+| `source_layout_id` | `INTEGER` | Ordinus `layoutId` |
+
+These are stored at project creation time. From Themis you can always find which Ordinus user/layout produced a project.
+
+**Ordinus → Themis reference** — one column added to the `bom_generations` table:
+
+| Column | Type | Value |
+|---|---|---|
+| `themis_project_id` | `INTEGER` | Themis project id returned after `POST /api/v1/projects` |
+
+Stored immediately after a successful send. Surfaces in `ApiBomGeneration` so the frontend can render "Open in Themis →" on page reload without a new send.
+
 ### ProjectCreate — optional machine/process
 
 `machine_uuid` and `process_uuid` are made `Optional[str] = None` in Themis' `ProjectCreate` schema so external callers can create a project without knowing slicer profile UUIDs. The user sets them in Themis before generating.
@@ -70,18 +92,24 @@ Adds a **Send to Themis** button (only rendered when `VITE_THEMIS_URL` is config
 
 | Repo | File | Change |
 |---|---|---|
+| `themis` | `backend/app/models.py` | Add `source_app`, `source_user`, `source_layout_id` to `Project` |
+| `themis` | `backend/app/database.py` | Add `projects` entry to `_ALTERS` for three new columns |
 | `themis` | `backend/app/api/routes/files.py` | Dedup check before write in `upload_file` |
-| `themis` | `backend/app/api/routes/projects.py` | `machine_uuid`/`process_uuid` → `Optional[str] = None` |
+| `themis` | `backend/app/api/routes/projects.py` | `machine_uuid`/`process_uuid` optional; accept + store source fields; include in response |
 | `themis` | `backend/tests/api/test_files_api.py` | Two new dedup tests |
+| `themis` | `backend/tests/api/test_projects_api.py` | New — test optional fields + source fields stored/returned |
+| `ordinus` | `server/src/db/schema.ts` | Add `themisProjectId` to `bomGenerations` |
+| `ordinus` | `shared/src/types.ts` | Add `themisProjectId: number \| null` to `ApiBomGeneration` |
+| `ordinus` | `server/src/services/bomGeneration.service.ts` | Include `themisProjectId` in `formatBomGeneration` |
 | `ordinus` | `server/src/config.ts` | Add `THEMIS_URL: z.string().url().optional()` |
 | `ordinus` | `.env.example` | Document `THEMIS_URL` |
 | `ordinus` | `.env.development` | Set `THEMIS_URL=http://localhost:8001` |
 | `ordinus` | `server/src/services/themis.service.ts` | New — Themis HTTP client (upload, create project, add item) |
 | `ordinus` | `server/src/services/themis.service.test.ts` | Unit tests with fetch mock |
-| `ordinus` | `server/src/controllers/themis.controller.ts` | New — send-to-themis handler |
+| `ordinus` | `server/src/controllers/themis.controller.ts` | New — send-to-themis handler; saves `themisProjectId` to DB |
 | `ordinus` | `server/src/routes/bom.routes.ts` | Register `POST /send-to-themis/:layoutId` |
 | `ordinus` | `app/src/api/bomGeneration.api.ts` | Add `sendToThemis(layoutId, token)` |
-| `app/src/components/BomGenerationPanel.tsx` | Add Send to Themis button + state |
+| `ordinus` | `app/src/components/BomGenerationPanel.tsx` | Send to Themis button; pre-populate link from `generation.themisProjectId` |
 
 ---
 
@@ -90,10 +118,13 @@ Adds a **Send to Themis** button (only rendered when `VITE_THEMIS_URL` is config
 | Invariant | Where enforced |
 |---|---|
 | Dedup scoped to target folder only | `upload_file` — query filters on `folder` |
-| Re-send is idempotent | Hash match returns existing record |
+| Re-send is idempotent | Hash match returns existing record; new Themis project created each time but files reused |
 | `THEMIS_URL` unset → graceful 503 | `themis.controller.ts` |
 | Button only visible when generation ready | `BomGenerationPanel` — `isReady` gate |
-| No migrations needed | `machine_uuid`/`process_uuid` nullable via Pydantic only; SQLite column remains TEXT |
+| "Open in Themis →" link persists across reloads | `generation.themisProjectId` stored in DB, returned by `getBomGeneration` |
+| Themis project always traceable to its Ordinus origin | `source_app / source_user / source_layout_id` written at creation time |
+| Themis columns are nullable / backward-compatible | Added via `_ALTERS` `ALTER TABLE ADD COLUMN`; existing rows get NULL |
+| Ordinus column is nullable | `themisProjectId` has no `.notNull()` in drizzle schema |
 
 ---
 
