@@ -26,9 +26,7 @@ Omnibus is the **orchestration repo** — it owns `docker-compose.yml` and cross
 
 Both services build from their own repos (`build: ../themis`, `build: ../orca`). Themis talks to Orca at `http://orca:5000` via `ORCA_SIDECAR_URL`. Orca must pass its healthcheck before Themis starts (`depends_on: condition: service_healthy`).
 
-See `docs/slicing-flow.md` for the full slicing pipeline and `docs/agent/README.md` for the doc ownership map.
+See `docs/slicing-flow.md` for the full slicing pipeline.
 
-## Spec & Plans
-- Design specs: `docs/superpowers/specs/`
-- Implementation plans: `docs/superpowers/plans/`
-- Agent reference docs: `docs/agent/`
+## Design Specs
+- `docs/superpowers/specs/` — feature design documents
