@@ -315,7 +315,7 @@ def test_ordinus_layout_slices_on_elegoo_centauri(
         f"Available: {profiles['filament_profiles']}"
     )
 
-    # Queue the job targeting the Elegoo Centauri Carbon placeholder
+    # Create job targeting the Elegoo Centauri Carbon placeholder
     resp = themis.post(
         f"{THEMIS_URL}/api/v1/jobs",
         json={
@@ -334,26 +334,23 @@ def test_ordinus_layout_slices_on_elegoo_centauri(
     resp.raise_for_status()
     job_id = resp.json()["id"]
 
-    # Poll until sliced (Orca processes the gridfinity STL)
-    deadline = time.monotonic() + SLICE_TIMEOUT_S
-    status = None
-    while time.monotonic() < deadline:
-        r = themis.get(f"{THEMIS_URL}/api/v1/jobs/{job_id}", timeout=10)
-        r.raise_for_status()
-        status = r.json()["status"]
-        if status in ("sliced", "uploading", "printing", "complete", "failed"):
-            break
-        time.sleep(POLL_INTERVAL_S)
-
-    # Best-effort cleanup regardless of test outcome
+    # Printers are not queue-eligible — use verify-slice to trigger slicing directly.
     try:
-        themis.post(f"{THEMIS_URL}/api/v1/jobs/{job_id}/cancel", timeout=10)
-    except Exception:
-        pass
+        resp = themis.post(
+            f"{THEMIS_URL}/api/v1/jobs/{job_id}/verify-slice",
+            json={"printer_id": printer_id},
+            timeout=SLICE_TIMEOUT_S,
+        )
+        result = resp.json()
+    finally:
+        try:
+            themis.post(f"{THEMIS_URL}/api/v1/jobs/{job_id}/cancel", timeout=10)
+        except Exception:
+            pass
 
-    assert status == "sliced", (
-        f"Expected job {job_id} to reach 'sliced', got {status!r}.\n"
+    assert result.get("ok") is True, (
+        f"verify-slice failed for job {job_id}: {result.get('error')!r}\n"
         f"  Ordinus layout: {layout_id}, Themis project: {themis_pid}, "
         f"file_id: {uploaded_file_id}\n"
-        "Check logs: docker compose logs themis | grep -E 'ERROR|slice'"
+        "Check logs: docker compose logs orca | tail -50"
     )

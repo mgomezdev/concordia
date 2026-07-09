@@ -26,13 +26,11 @@ Or from the host (HOST_PORT=8001 as set in .env):
 from __future__ import annotations
 
 import io
+import os
 import struct
-import time
 
 import pytest
 import requests
-
-import os
 
 THEMIS_URL = os.environ.get("THEMIS_URL", "http://localhost:8001")
 
@@ -40,8 +38,7 @@ MACHINE_PROFILE  = "Elegoo Centauri Carbon 0.4 nozzle"
 PROCESS_PROFILE  = "0.16mm Optimal @Elegoo CC 0.4 nozzle"
 FILAMENT_PROFILE = "Elegoo PLA @ECC"
 
-SLICE_TIMEOUT_S  = 300   # slicing can take 2–3 min inside Docker
-POLL_INTERVAL_S  = 5
+SLICE_TIMEOUT_S = 300   # slicing can take 2–3 min inside Docker
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -178,24 +175,21 @@ def test_centauri_slice_reaches_sliced_status(
     resp.raise_for_status()
     job_id = resp.json()["id"]
 
-    # Poll until sliced (or failed / timeout)
-    deadline = time.monotonic() + SLICE_TIMEOUT_S
-    status = None
-    while time.monotonic() < deadline:
-        r = http.get(f"{THEMIS_URL}/api/v1/jobs/{job_id}", timeout=10)
-        r.raise_for_status()
-        status = r.json()["status"]
-        if status in ("sliced", "uploading", "printing", "complete", "failed"):
-            break
-        time.sleep(POLL_INTERVAL_S)
-
-    # Cancel to clean up regardless of outcome
+    # Printers are not queue-eligible — use verify-slice to trigger slicing directly.
     try:
-        http.post(f"{THEMIS_URL}/api/v1/jobs/{job_id}/cancel", timeout=10)
-    except Exception:
-        pass
+        resp = http.post(
+            f"{THEMIS_URL}/api/v1/jobs/{job_id}/verify-slice",
+            json={"printer_id": printer_id},
+            timeout=SLICE_TIMEOUT_S,
+        )
+        result = resp.json()
+    finally:
+        try:
+            http.post(f"{THEMIS_URL}/api/v1/jobs/{job_id}/cancel", timeout=10)
+        except Exception:
+            pass
 
-    assert status == "sliced", (
-        f"Expected job {job_id} to reach 'sliced', got {status!r}. "
-        "Check Themis logs: docker compose logs themis | grep -E 'ERROR|slice'"
+    assert result.get("ok") is True, (
+        f"verify-slice failed for job {job_id}: {result.get('error')!r}\n"
+        "Check Orca logs: docker compose logs orca | tail -50"
     )

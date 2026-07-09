@@ -40,6 +40,30 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  ordinus:
+    image: ninjabuffalo/ordinus:latest
+    ports:
+      - "${ORDINUS_PORT:-3001}:80"
+    volumes:
+      - ordinus-config:/config
+      - ordinus-data:/data
+    environment:
+      - CORS_ORIGIN=http://localhost:${ORDINUS_PORT:-3001}
+      - LOG_LEVEL=info
+      - THEMIS_URL=http://themis:8000
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/v1/health').then(r => { if (!r.ok) process.exit(1) })"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      themis:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   themis-data:
   orca-slicer:
+  ordinus-config:
+  ordinus-data:
