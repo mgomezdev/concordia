@@ -5,14 +5,14 @@
 #   docker compose -f docker-compose.yml -f docker-compose.local.yml up
 
 services:
-  orca:
-    image: ninjabuffalo/orca:latest
+  laminus:
+    image: ninjabuffalo/laminus:latest
     volumes:
-      - ../orca/config:/config
-      - ../orca/data:/data
+      - laminus-config:/config
+      - laminus-data:/data
       # Named volume caches the OrcaSlicer AppImage across restarts.
       # Re-downloaded only when ORCA_VERSION changes.
-      - orca-slicer:/opt/orcaslicer
+      - laminus-slicer:/opt/orcaslicer
     shm_size: "1gb"
     environment:
       - TZ=Etc/UTC
@@ -33,10 +33,16 @@ services:
     volumes:
       - themis-data:/data
     environment:
-      - ORCA_SIDECAR_URL=http://orca:5000
+      - LAMINUS_SIDECAR_URL=http://laminus:5000
       - THEMIS_LIBRARY_DIR=/data/library
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
-      orca:
+      laminus:
         condition: service_healthy
     restart: unless-stopped
 
@@ -59,11 +65,13 @@ services:
       start_period: 60s
     depends_on:
       themis:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   themis-data:
-  orca-slicer:
+  laminus-config:
+  laminus-data:
+  laminus-slicer:
   ordinus-config:
   ordinus-data:
