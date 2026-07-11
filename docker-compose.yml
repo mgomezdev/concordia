@@ -36,7 +36,7 @@ services:
       - LAMINUS_SIDECAR_URL=http://laminus:5000
       - THEMIS_LIBRARY_DIR=/data/library
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -57,6 +57,7 @@ services:
       - CORS_ORIGIN=${CORS_ORIGIN:-*}
       - LOG_LEVEL=info
       - THEMIS_URL=http://themis:8000
+      - PUBLIC_URL=http://localhost:${ORDINUS_PORT:-3001}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/v1/health').then(r => { if (!r.ok) process.exit(1) })"]
       interval: 10s

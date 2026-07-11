@@ -30,8 +30,10 @@ from typing import Any
 import pytest
 import requests
 
-ORDINUS_URL = os.environ.get("ORDINUS_URL", "http://localhost:3001")
-THEMIS_URL  = os.environ.get("THEMIS_URL",  "http://localhost:8001")
+_ordinus_port = os.environ.get("ORDINUS_PORT", "3001")
+_themis_port  = os.environ.get("HOST_PORT",   "8001")
+ORDINUS_URL = os.environ.get("ORDINUS_URL", f"http://localhost:{_ordinus_port}")
+THEMIS_URL  = os.environ.get("THEMIS_URL",  f"http://localhost:{_themis_port}")
 
 BOM_TIMEOUT_S    = 120
 SLICE_TIMEOUT_S  = 300

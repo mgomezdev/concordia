@@ -32,7 +32,8 @@ import struct
 import pytest
 import requests
 
-THEMIS_URL = os.environ.get("THEMIS_URL", "http://localhost:8001")
+_themis_port = os.environ.get("HOST_PORT", "8001")
+THEMIS_URL = os.environ.get("THEMIS_URL", f"http://localhost:{_themis_port}")
 
 MACHINE_PROFILE  = "Elegoo Centauri Carbon 0.4 nozzle"
 PROCESS_PROFILE  = "0.16mm Optimal @Elegoo CC 0.4 nozzle"
@@ -121,9 +122,26 @@ def uploaded_file_id(http: requests.Session) -> int:
     resp.raise_for_status()
     file_id = resp.json()["id"]
     yield file_id
-    # best-effort cleanup
+    # best-effort cleanup — may fail if FK constraints prevent deletion
     try:
         http.delete(f"{THEMIS_URL}/api/v1/files/{file_id}", timeout=10)
+    except Exception:
+        pass
+
+
+@pytest.fixture
+def project_id(http: requests.Session):
+    """Create a minimal project and clean up after the test."""
+    resp = http.post(
+        f"{THEMIS_URL}/api/v1/projects",
+        json={"name": "E2E Centauri Slice Test", "order_type": "internal"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    pid = resp.json()["id"]
+    yield pid
+    try:
+        http.delete(f"{THEMIS_URL}/api/v1/projects/{pid}", timeout=10)
     except Exception:
         pass
 
@@ -134,10 +152,13 @@ def uploaded_file_id(http: requests.Session) -> int:
 def test_centauri_slice_reaches_sliced_status(
     http: requests.Session,
     uploaded_file_id: int,
+    project_id: int,
 ) -> None:
     """
     Full slice pipeline for the Elegoo Centauri Carbon placeholder:
-    queued → slicing → sliced  (no upload, printer is offline)
+      1. Pack the STL into a 3MF via generate (no printers — geometry only)
+      2. Create a job against the 3MF with explicit Centauri profiles
+      3. verify-slice: queued → slicing → sliced  (no upload, printer is offline)
     """
     printer_id = _find_placeholder_printer_id(http)
 
@@ -156,11 +177,36 @@ def test_centauri_slice_reaches_sliced_status(
         f"{FILAMENT_PROFILE!r} not in filament_profiles: {profiles['filament_profiles']}"
     )
 
-    # Create job targeting the placeholder printer
+    # Add the STL to the project
+    resp = http.post(
+        f"{THEMIS_URL}/api/v1/projects/{project_id}/items",
+        json={
+            "file_id": uploaded_file_id,
+            "quantity": 1,
+            "filament_type": "any",
+            "filament_color": "any",
+        },
+        timeout=10,
+    )
+    assert resp.status_code == 201, f"add item failed: {resp.status_code} {resp.text}"
+
+    # Generate with no printers: packs the STL into a 3MF without creating printer configs.
+    resp = http.post(
+        f"{THEMIS_URL}/api/v1/projects/{project_id}/generate",
+        json={"eligible_printer_ids": []},
+        timeout=60,
+    )
+    assert resp.status_code == 200, f"generate failed: {resp.status_code} {resp.text}"
+    gen = resp.json()
+    assert gen["files"], "generate returned no files — pack step failed"
+    threemf_file_id = gen["files"][0]["id"]
+
+    # Create a job against the 3MF with explicit Centauri profiles so verify-slice
+    # has machine, process, and filament presets to resolve.
     resp = http.post(
         f"{THEMIS_URL}/api/v1/jobs",
         json={
-            "uploaded_file_id": uploaded_file_id,
+            "uploaded_file_id": threemf_file_id,
             "plate_number": 1,
             "printer_configs": [
                 {
@@ -175,7 +221,7 @@ def test_centauri_slice_reaches_sliced_status(
     resp.raise_for_status()
     job_id = resp.json()["id"]
 
-    # Printers are not queue-eligible — use verify-slice to trigger slicing directly.
+    # verify-slice triggers OrcaSlicer directly on the packed 3MF.
     try:
         resp = http.post(
             f"{THEMIS_URL}/api/v1/jobs/{job_id}/verify-slice",

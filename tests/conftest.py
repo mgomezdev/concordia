@@ -1,4 +1,26 @@
+import os
+from pathlib import Path
+
 import pytest
+
+
+def _load_dotenv(path: Path) -> None:
+    """Parse a .env file and populate os.environ for keys not already set."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+# Load project-root .env so ORDINUS_PORT, HOST_PORT, etc. are available
+_load_dotenv(Path(__file__).parent.parent / ".env")
 
 
 def pytest_addoption(parser):
