@@ -17,7 +17,7 @@ services:
     environment:
       - TZ=Etc/UTC
       - PYTHONUNBUFFERED=1
-      - ORCA_VERSION=${ORCA_VERSION:-2.4.1}
+      - ORCA_VERSION=${ORCA_VERSION:-2.4.2}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
       interval: 10s
