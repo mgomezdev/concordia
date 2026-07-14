@@ -1,7 +1,7 @@
 # Filament Consumption, Profile Drift & Laminus Health — Design Spec
 
 **Date:** 2026-07-13  
-**Revised:** 2026-07-13 (post Fable review)  
+**Revised:** 2026-07-14 (Feature 2 redesigned: drift check integrated into catalog sync; Spoolman online sanity check added)  
 **Status:** Approved  
 **Repos:** `themis`
 
@@ -12,7 +12,7 @@
 Three self-contained enhancements to the Themis/Laminus stack:
 
 1. **Filament consumption tracking** — persist per-job actual grams on the `Job` row; surface in history view; auto-deduct from the correct Spoolman spool on completion.
-2. **Profile drift detection** — on-demand report of stale OrcaSlicer profile references across printers, jobs, and Spoolman filaments.
+2. **Profile drift remap on catalog sync** — catalog refresh/rescan pre-scans the incoming catalog for removed profiles; if live data references them, the sync pauses and the user resolves each stale reference via a remap modal before the new catalog is committed.
 3. **Laminus health chip** — a sidebar status indicator showing whether the sidecar is up, building, or offline, with catalog counts in a detail panel.
 
 Feature 1 requires one migration (v008). Features 2 and 3 require no schema changes.
@@ -106,87 +106,200 @@ asyncio.create_task(_deduct_spool(spoolman_cfg, spool_id, job.filament_grams))
 
 ---
 
-## Feature 2 — Profile Drift Detection
+## Feature 2 — Profile Drift Remap on Catalog Sync
 
 ### Goal
 
-One endpoint that computes, on demand, a structured report of stale OrcaSlicer profile references across three object types. No server-side cache — the check is fast (small-table SELECTs + set lookups) and runs only when a user visits the Settings page.
+Catalog refresh/rescan must not silently orphan live profile references. Before Themis commits an incoming catalog to its cache, it diffs the incoming catalog against the current one. If profiles that live data references would disappear, the sync pauses and returns a structured pending-remaps payload; the user resolves each stale reference in a modal, and a confirm call applies the DB updates and completes the swap.
 
-### Shared catalog helper — `services/catalog_utils.py`
+### Flow overview
 
-`settings.py` (lines 272–276) already builds `machine_names` and `filament_names` sets from the catalog. Extract this logic into a shared function rather than duplicating it in `drift.py`:
+**Happy path (no drift):** User clicks Refresh/Rescan → Themis fetches the new catalog from Laminus into a local variable → `compute_drift(old, new, ...)` finds no removed profiles referenced by live data → cache is committed immediately → response `{"status": "ok", ...}`. Identical behavior to today, plus the status field.
+
+**Drift path:** Same fetch → `compute_drift` finds stale references → the new catalog is parked in a module-level pending-sync slot (the cache still serves the **old** catalog) → response `{"status": "pending_remaps", ...}` → UI opens the RemapModal → user picks replacements → `POST /catalog/confirm-remap` → Themis applies DB/Spoolman updates, commits the parked catalog to the cache, clears the pending slot → `{"status": "ok"}`.
+
+If the current cache is cold (first sync ever), there is no old catalog to diff against — commit directly, no drift check.
+
+### Backend — `services/catalog_utils.py`
+
+Keep the shared name-set helper (extracted from `settings.py` lines 272–276; update `settings.py` to use it):
 
 ```python
 def catalog_name_sets(catalog: dict) -> tuple[set[str], set[str], set[str], set[str]]:
     """Returns (machine_names, process_names, filament_names, filament_uuids)."""
 ```
 
-Update `settings.py` to use this helper. `drift.py` uses it too.
+Add the drift computation:
 
-### New endpoint — `GET /api/v1/drift`
-
-**New file:** `backend/app/api/routes/drift.py`. Registered in `main.py`.
+```python
+async def compute_drift(
+    old_catalog: dict, new_catalog: dict,
+    session: AsyncSession, spoolman_cfg: SpoolmanConfig | None,
+) -> dict | None:
+    """Returns a pending-remaps payload, or None if no live data references removed profiles."""
+```
 
 **Algorithm:**
 
-1. Call `get_cached_catalog()` from `routes/laminus.py`. If the catalog is cold and Laminus is unreachable, this raises HTTPException — let it propagate. The Settings UI shows the standard 502/503 error.
-2. Call `catalog_name_sets(catalog)` → four sets.
-3. Load `SpoolmanConfig` (id=1).
+1. `removed_* = old_sets - new_sets` for machine, process, filament names, and filament UUIDs. If all four removal sets are empty, return `None` without touching the DB — the common case costs four set subtractions.
+2. **Printers:** for each `Printer` row, emit an entry if `current_orca_printer_profile` is in `removed_machine`; for each slot in `loaded_filaments`, emit an entry if its `filament_profile` is non-null and in `removed_filament_names`.
+3. **Jobs:** for each `Job` with `status IN ('queued', 'blocked')`, for each of its `JobPrinterConfig` rows, emit an entry if `print_profile` is in `removed_process` or `filament_profile` is non-null and in `removed_filament_names`. Include `file_name` from `UploadedFile.original_filename`.
+4. **Spoolman** (only if `spoolman_cfg` is enabled): `fetch_filaments()`, decode each filament's `extra.orca_profiles` (double-JSON-encoded dict UUID → name), emit an entry per UUID key in `removed_filament_uuids`. On HTTP error, set `spoolman_error` in the payload and skip this section — a Spoolman outage must not block a catalog sync.
+5. If no entries were emitted (removed profiles exist but nothing references them), return `None`.
 
-**Printers check:**  
-For each `Printer` row:
-- Skip `current_orca_printer_profile` if null (printer not yet configured).
-- Flag if machine profile name not in `machine_names`.
-- For each entry in `loaded_filaments`, flag `filament_profile` if not null and not in `filament_names`.
+As in the previous revision, `ProjectItem.filament_profile_uuid` is not checked — legacy field, no UI path populates it.
 
-**Jobs check:**  
-For each `Job` where `status IN ('queued', 'blocked')`:
-- Load its `JobPrinterConfig` rows.
-- Flag `print_profile` if not in `process_names`; flag `filament_profile` if not null and not in `filament_names`.
-
-**Spoolman filaments check** (skip if `SpoolmanConfig` not enabled):  
-Call `fetch_filaments()`. For each filament, decode `extra.orca_profiles` (double-JSON-encoded). Flag any UUID key not in `filament_uuids`. On HTTP error, set `spoolman_error` and omit this section.
-
-**Dropped from v1:** The `ProjectItem.filament_profile_uuid` check. That field is a legacy artifact (`models.py:186-187`) that no current UI path populates. Flagging it produces alarms with no actionable remediation.
-
-**Response shape:**
+**Pending-remaps payload structure** (also the drift-path HTTP response body):
 
 ```json
 {
-  "checked_at": "2026-07-13T10:00:00Z",
-  "catalog_age_seconds": 42,
-  "all_clear": true,
-  "printers": [],
-  "jobs": [
-    {"id": 5, "file_name": "bracket.3mf", "stale": ["PLA @0.20mm Standard"]}
-  ],
-  "spoolman_filaments": [],
+  "status": "pending_remaps",
+  "sync_id": "b3f1c9e0-…",
+  "pending": {
+    "printers": [
+      {"printer_id": 1, "printer_name": "X1C", "field": "current_orca_printer_profile",
+       "slot": null, "stale_value": "Bambu X1C 0.4 nozzle", "options_kind": "machine", "required": true},
+      {"printer_id": 1, "printer_name": "X1C", "field": "loaded_filaments.filament_profile",
+       "slot": 0, "stale_value": "Generic PLA Old", "options_kind": "filament", "required": true}
+    ],
+    "jobs": [
+      {"job_id": 5, "config_id": 12, "file_name": "bracket.3mf", "field": "print_profile",
+       "stale_value": "0.20mm Standard Old", "options_kind": "process", "required": false}
+    ],
+    "spoolman_filaments": [
+      {"filament_id": 9, "filament_name": "PolyLite PLA", "stale_uuid": "a1b2…",
+       "stale_name": "PolyLite PLA @X1C", "options_kind": "filament_uuid", "required": false}
+    ]
+  },
+  "options": {
+    "machine": ["Bambu X1C 0.4 nozzle (new)", "…"],
+    "process": ["…"],
+    "filament": ["…"],
+    "filament_uuids": [{"uuid": "c3d4…", "name": "PolyLite PLA @X1C v2"}]
+  },
   "spoolman_error": null
 }
 ```
 
-`all_clear` is `true` only when all three lists are empty and `spoolman_error` is null (or Spoolman is disabled).
+`options` carries the **incoming** catalog's valid values — the client cannot get them from `GET /catalog`, which still serves the old catalog while the sync is pending.
 
-Include `file_name` in job entries (from `UploadedFile.original_filename`) so the report is immediately actionable.
+### Backend — modified refresh and rescan endpoints (`routes/laminus.py`)
 
-### Frontend — `api/drift.ts`
+Refactor `_fetch_and_cache()` into two steps so the fetch can happen without the commit:
 
-New file:
-```typescript
-export interface DriftReport { /* matches response shape */ }
-export async function fetchDriftReport(): Promise<DriftReport>
+```python
+async def _fetch_catalog() -> tuple[bytes, dict]:   # pull from Laminus, parse, no side effects
+def _commit_catalog(raw: bytes, parsed: dict) -> None:  # write module-level cache + fetched_at
 ```
+
+Both **refresh** and **rescan** end with the same gate (rescan after its existing rebuild-trigger + health poll; refresh immediately):
+
+```python
+raw, new_catalog = await _fetch_catalog()
+old_catalog = _catalog_dict
+drift = await compute_drift(old_catalog, new_catalog, session, spoolman_cfg) if old_catalog else None
+if drift is None:
+    _commit_catalog(raw, new_catalog)
+    return {"status": "ok", **existing_response_fields}
+_pending_sync = {"sync_id": uuid4(), "raw": raw, "catalog": new_catalog,
+                 "pending": drift["pending"], "created_at": time.time()}
+return drift   # 200, status: "pending_remaps"
+```
+
+Note: refresh no longer clears the cache before fetching — the old catalog must survive as the diff baseline and keep serving reads until the swap commits.
+
+`_pending_sync` is a single module-level slot next to the existing catalog globals. A new refresh/rescan overwrites it (the newer fetch wins; a confirm against the overwritten sync fails cleanly on `sync_id`). In-memory is acceptable for the same reason the catalog cache is: Themis is single-process, and losing the slot on restart just means the user re-triggers the sync — no data loss, no corruption.
+
+Drift detection returns HTTP 200 (the pre-scan succeeded); the `status` field discriminates. Errors from Laminus keep their existing 502/503 behavior.
+
+### Backend — `POST /api/v1/laminus/catalog/confirm-remap`
+
+Request body:
+
+```json
+{
+  "sync_id": "b3f1c9e0-…",
+  "resolutions": {
+    "printers": [{"printer_id": 1, "field": "current_orca_printer_profile", "slot": null, "new_value": "Bambu X1C 0.4 nozzle (new)"}],
+    "jobs": [{"config_id": 12, "field": "print_profile", "new_value": null}],
+    "spoolman_filaments": [{"filament_id": 9, "stale_uuid": "a1b2…", "new_uuid": null}]
+  }
+}
+```
+
+**Validation (all before any write):**
+
+- `_pending_sync` is None or `sync_id` mismatch → **409** ("sync superseded or expired — re-run the catalog sync").
+- Every `pending.printers` entry must have a matching resolution with a non-null `new_value` present in the pending catalog's corresponding name set → **422** listing the unresolved entries.
+- Job/Spoolman resolutions: `new_value`/`new_uuid` may be null (clear/drop) or must be valid in the pending catalog → **422** if invalid. Missing resolution entries are treated as null.
+
+**Apply (single DB transaction):**
+
+- Printers: set `current_orca_printer_profile`, or rewrite the slot dict's `filament_profile` — reassign the whole `loaded_filaments` list so SQLAlchemy detects the JSON mutation.
+- Jobs: set `JobPrinterConfig.print_profile` / `filament_profile` to the new value or `NULL`.
+- Spoolman (after commit, best-effort per filament): decode `extra.orca_profiles`, delete the stale UUID key, insert `new_uuid → name` (name looked up from the pending catalog) if provided, re-encode, and PATCH via a new `spoolman_service.update_filament_extra(url, api_key, filament_id, extra)`. A per-filament HTTP failure is logged and reported in the response's `spoolman_failures` list but does not abort the swap.
+
+**Complete:** `_commit_catalog(pending.raw, pending.catalog)`, clear `_pending_sync`, return `{"status": "ok", "applied": {"printers": n, "jobs": n, "spoolman_filaments": n}, "spoolman_failures": []}`.
+
+### Frontend — `api/laminus.ts`
+
+```typescript
+export interface SyncOk { status: "ok"; /* existing refresh/rescan fields */ }
+export interface PendingEntry { /* per-type fields as in payload above */ required: boolean; }
+export interface PendingRemaps {
+  status: "pending_remaps";
+  sync_id: string;
+  pending: { printers: PrinterEntry[]; jobs: JobEntry[]; spoolman_filaments: SpoolmanEntry[] };
+  options: { machine: string[]; process: string[]; filament: string[];
+             filament_uuids: { uuid: string; name: string }[] };
+  spoolman_error: string | null;
+}
+export type SyncResponse = SyncOk | PendingRemaps;
+
+export async function refreshCatalog(): Promise<SyncResponse>
+export async function rescanCatalog(): Promise<SyncResponse>
+export async function confirmRemap(syncId: string, resolutions: Resolutions): Promise<ConfirmResult>
+```
+
+### Frontend — `RemapModal.tsx`
+
+**New file:** `frontend/src/components/RemapModal.tsx`. Props: `payload: PendingRemaps`, `onDone(result)`, `onCancel()`.
+
+- Three groups, rendered only when non-empty: **Printers**, **Queued Jobs**, **Spoolman Filaments**. Each row shows the owning object (printer name + slot, job file name, filament name), the stale value struck through, and a dropdown.
+- Printer dropdowns: options from `options.machine` or `options.filament` per `options_kind`; no empty choice; unselected state blocks confirm.
+- Job and Spoolman dropdowns: same option lists (Spoolman uses `options.filament_uuids`, displaying names, submitting UUIDs) plus a leading **"— clear —"** option, preselected. "Clear" submits `null`.
+- If `spoolman_error` is set, show a warning banner: Spoolman references could not be checked this sync.
+- **Confirm** button disabled until every `required: true` row has a selection. On click: `confirmRemap(sync_id, resolutions)`; on 409, show "Sync superseded — run the catalog sync again" and close.
+- **Cancel** closes the modal without calling the API; the old catalog simply remains active (the pending slot server-side is inert and will be overwritten by the next sync).
 
 ### Frontend — `SettingsScreen.tsx`
 
-Add a **"Profile Drift"** section below the Spoolman section:
+The existing "Refresh Catalog" and "Rescan" buttons switch to the new `SyncResponse` type:
 
-- Fetch on mount via `fetchDriftReport()`.
-- Loading state: spinner.
-- Error state (502/503): "Could not check — Laminus sidecar unreachable."
-- `all_clear: true`: green "All profiles current" row.
-- Otherwise: one collapsible accordion per non-empty category (Printers / Jobs / Spoolman Filaments), count in header, affected names in body.
-- "Re-check" button: clears local state and re-fetches.
+- `status: "ok"` → success toast, exactly as today.
+- `status: "pending_remaps"` → store the payload in state, open `<RemapModal>`.
+- Modal `onDone`: close, success toast ("Catalog updated — N references remapped"); append a warning toast if `spoolman_failures` is non-empty.
+- Modal `onCancel`: close, info toast ("Catalog sync cancelled — profiles unchanged").
+
+### Backend — Spoolman online sanity check (`routes/settings.py`)
+
+When `POST /api/v1/settings/spoolman/test` receives a successful response from Spoolman, run a sanity check before returning to the client: compare every filament's `extra.orca_profiles` UUID keys against the Themis cached catalog's filament UUID set.
+
+**This check is Spoolman-vs-catalog, not catalog-vs-catalog.** It fires because Spoolman's filament records may reference profiles that were never in the current Themis catalog (e.g., the catalog was rebuilt from a different OrcaSlicer library while Spoolman was offline).
+
+**Algorithm:**
+
+1. If `_catalog_dict` is None (cold cache), skip the check and return the existing `{"status": "ok", ...}` response — can't validate without a catalog.
+2. Call `catalog_name_sets(_catalog_dict)` → `filament_uuids`.
+3. `fetch_filaments()` from Spoolman. For each filament, decode `extra.orca_profiles` (double-JSON-encoded). Collect every UUID key not in `filament_uuids`.
+4. If no stale UUIDs, return the existing success response unchanged.
+5. If stale UUIDs found: generate a `sync_id`, write `_pending_sync` with `raw=None` and `catalog=None` (no catalog swap will happen on confirm — only Spoolman updates apply), and return `status: "pending_remaps"` with `printers: []`, `jobs: []`, `spoolman_filaments: [...]`, and `options.filament_uuids` from `_catalog_dict`. The `options` other keys (`machine`, `process`, `filament`) are empty lists.
+
+**`confirm-remap` reuse:** No changes to the confirm-remap endpoint. When `_pending_sync.raw` is `None`, the endpoint skips `_commit_catalog` after applying Spoolman updates and just clears the pending slot. `printers` and `jobs` resolution lists will be empty; the existing "missing resolution for required entry" validation trivially passes (no required entries).
+
+**Frontend:** `testSpoolmanConnection()` in `api/settings.ts` changes its return type from a plain success object to `SyncResponse`. The "Test Connection" button handler in `SettingsScreen.tsx` adds the `pending_remaps` branch: store the payload, open `<RemapModal>`. `onDone` shows a success toast ("Spoolman connected — N filament profile references remapped"). `onCancel` shows an info toast ("Connected — stale profile references left unresolved").
+
+No new Spoolman-specific payload shape: the existing `PendingRemaps` interface covers this case exactly.
 
 ---
 
@@ -261,16 +374,21 @@ Add `<LaminusStatusChip />` to the Account `nav-section`, below the Settings `Na
 | `themis` | `backend/app/api/routes/jobs.py` | `_to_dict`: include `job.filament_grams` |
 | `themis` | `backend/app/services/queue_engine.py` | Capture grams before gcode delete; fire deduction task |
 | `themis` | `backend/app/services/spoolman_service.py` | Add `record_spool_use(url, api_key, spool_id, grams)` |
-| `themis` | `backend/app/services/catalog_utils.py` | **New** — `catalog_name_sets(catalog)` shared helper |
-| `themis` | `backend/app/api/routes/settings.py` | Use `catalog_name_sets` instead of inline set-builds |
-| `themis` | `backend/app/api/routes/drift.py` | **New** — `GET /api/v1/drift` |
-| `themis` | `backend/app/main.py` | Register `drift` router |
-| `themis` | `backend/app/api/routes/laminus.py` | Extend `catalog/status`: `catalog_counts`, `status`, 30 s health memo |
+| `themis` | `backend/app/services/catalog_utils.py` | **New** — `catalog_name_sets(catalog)` + `compute_drift(old, new, session, spoolman_cfg)` |
+| `themis` | `backend/app/api/routes/settings.py` | Use `catalog_name_sets` instead of inline set-builds; Spoolman sanity check after successful test; return `SyncResponse` |
+| `themis` | `backend/app/api/routes/laminus.py` | Split `_fetch_and_cache` into `_fetch_catalog`/`_commit_catalog`; drift gate in refresh + rescan; `_pending_sync` slot (supports `raw=None` for Spoolman-only pending); **new** `POST /catalog/confirm-remap` |
+| `themis` | `backend/app/services/spoolman_service.py` | Add `update_filament_extra(url, api_key, filament_id, extra)` (Feature 2) |
+| `themis` | `backend/app/api/routes/laminus.py` | Extend `catalog/status`: `catalog_counts`, `status`, 30 s health memo (Feature 3) |
 | `themis` | `frontend/src/screens/HistoryScreen.tsx` | Add `filament_grams` to type + table column |
-| `themis` | `frontend/src/api/drift.ts` | **New** — `fetchDriftReport()` |
-| `themis` | `frontend/src/screens/SettingsScreen.tsx` | Add "Profile Drift" section |
+| `themis` | `frontend/src/api/laminus.ts` | `SyncResponse` union types for refresh/rescan; `confirmRemap()` |
+| `themis` | `frontend/src/components/RemapModal.tsx` | **New** — stale-reference resolution modal |
+| `themis` | `frontend/src/screens/SettingsScreen.tsx` | Refresh/Rescan handlers branch on `status`; mount `<RemapModal>`; Test Connection handler adds `pending_remaps` branch |
+| `themis` | `frontend/src/api/settings.ts` | `testSpoolmanConnection()` returns `SyncResponse` instead of plain success object |
+
 | `themis` | `frontend/src/components/LaminusStatusChip.tsx` | **New** — polling status chip |
 | `themis` | `frontend/src/components/Sidebar.tsx` | Add `<LaminusStatusChip />` to Account section |
+
+**Dropped from the 2026-07-13 revision** (superseded by the sync-integrated design): `backend/app/api/routes/drift.py`, the `drift` router registration in `main.py`, `frontend/src/api/drift.ts`, and `backend/tests/api/test_drift_api.py`.
 
 ---
 
@@ -281,6 +399,7 @@ Add `<LaminusStatusChip />` to the Account `nav-section`, below the Settings `Na
 | `backend/tests/api/test_jobs_api.py` | `GET /jobs/history` includes `filament_grams` from `job.filament_grams`; null when not set |
 | `backend/tests/services/test_queue_engine.py` | `handle_print_complete` sets `job.filament_grams` from gcode before delete; calls `record_spool_use` once for the assigned printer's matched slot; skips deduction when SpoolmanConfig disabled; skips when grams null; HTTP error in `record_spool_use` does not affect job status |
 | `backend/tests/services/test_spoolman_service.py` | `record_spool_use` calls correct Spoolman URL with `{"use_weight": grams}` |
-| `backend/tests/api/test_drift_api.py` | **New** — stale machine profile flagged; stale job process profile flagged; null printer profile skipped; all-clear when catalog matches; Spoolman check skipped when not enabled; Spoolman fetch failure sets `spoolman_error`, returns partial result; cold catalog returns 502/503 |
-| `backend/tests/api/test_laminus_api.py` | `catalog/status` includes `catalog_counts` and correct `status` for each health state (online, building via 503, building via catalog_building flag, offline) |
-| `backend/tests/services/test_catalog_utils.py` | **New** — `catalog_name_sets` returns correct sets for normal catalog; empty catalog; missing keys |
+| `backend/tests/api/test_laminus_api.py` | **Feature 2** — refresh with identical catalog completes immediately (`status: "ok"`, cache swapped); refresh with removed profile referenced by a printer returns `status: "pending_remaps"` with correct pending entries and options, and `GET /catalog` still serves the old catalog; confirm-remap with valid resolutions updates `Printer` / `JobPrinterConfig` rows, swaps the cache, and clears the pending slot; confirm-remap missing a required printer resolution (or with a value not in the incoming catalog) returns 422 and applies nothing; confirm-remap with stale/unknown `sync_id` returns 409; Spoolman resolution with `new_uuid: null` drops the stale UUID key from `extra.orca_profiles` via `update_filament_extra`; cold cache (first sync) commits without drift check; Spoolman-only confirm (`raw=None`) applies `update_filament_extra` and clears pending slot without calling `_commit_catalog` |
+| `backend/tests/api/test_settings_api.py` | **Feature 2 (Spoolman sanity check)** — test-connection success with all Spoolman UUIDs present in catalog returns normal success response; test-connection success with one stale UUID returns `status: "pending_remaps"` with `printers: []`, `jobs: []`, one `spoolman_filaments` entry, and `options.filament_uuids` from the cached catalog; cold catalog (`_catalog_dict` is None) at test-connection time returns normal success without checking UUIDs |
+| `backend/tests/api/test_laminus_api.py` | **Feature 3** — `catalog/status` includes `catalog_counts` and correct `status` for each health state (online, building via 503, building via catalog_building flag, offline) |
+| `backend/tests/services/test_catalog_utils.py` | **New** — `catalog_name_sets` returns correct sets for normal catalog; empty catalog; missing keys. `compute_drift`: returns None when no removals; returns None when removals are unreferenced; flags printer machine + slot filament, queued/blocked job configs only, stale Spoolman UUIDs; Spoolman disabled → section skipped; Spoolman fetch failure → `spoolman_error` set, other sections intact |
