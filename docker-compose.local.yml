@@ -1,6 +1,5 @@
 # Build from local source instead of pulling from Docker Hub.
-# Requires sibling repos ../orca (laminus), ../themis, and ../gridfinity-customizer to be present.
-# Once the orca/ directory is renamed to laminus/, update the bind-mount paths below.
+# Requires sibling repos ../orca (laminus), ../themis, and ../ordinus to be present.
 #
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.local.yml up
@@ -17,5 +16,5 @@ services:
 
   ordinus:
     build:
-      context: ../gridfinity-customizer
+      context: ../ordinus
       dockerfile: infra/Dockerfile

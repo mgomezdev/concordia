@@ -34,7 +34,7 @@ Three services, all managed by Docker Compose:
 |---|---|---|---|
 | `laminus` | `../orca` | OrcaSlicer sidecar — profile catalog, slicing, 3MF packing | Internal :5000 only |
 | `themis` | `../themis` | Print queue, job lifecycle, printer management, REST API + React frontend | `HOST_PORT` (default 8001) |
-| `ordinus` | `../gridfinity-customizer` | Gridfinity bin layout tool, BOM generation, Themis integration | `ORDINUS_PORT` (default 3002) |
+| `ordinus` | `../ordinus` | Gridfinity bin layout tool, BOM generation, Themis integration | `ORDINUS_PORT` (default 3002) |
 
 ### Dependency chain
 
@@ -70,7 +70,7 @@ parent-dir/
 ├── omnibus/          ← this repo (Concordia)
 ├── themis/
 ├── orca/             ← Laminus source (note: dir is named "orca")
-└── gridfinity-customizer/  ← Ordinus source
+└── ordinus/              ← Ordinus source
 ```
 
 ```bash

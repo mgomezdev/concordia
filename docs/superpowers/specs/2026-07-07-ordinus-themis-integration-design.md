@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-07
 **Status:** Approved
-**Repos:** `gridfinity-customizer` (Ordinus), `themis`
+**Repos:** `ordinus`, `themis`
 
 ---
 
