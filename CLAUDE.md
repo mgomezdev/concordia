@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code when working with code in this repository.
 
+## Communication style
+When reporting information, be extremely concise and sacrifice grammar for the sake of concision.
+
+
 ## Commands
 
 ```bash
