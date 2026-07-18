@@ -1,0 +1,67 @@
+# Standalone test stack with mock services.
+# Replaces real Laminus with a fast in-process mock and adds mock Spoolman.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up --build
+#
+# Run tests against it:
+#   LAMINUS_URL=http://localhost:5100 pytest tests/e2e/ --integration
+#
+# Mock Laminus is exposed on port 5100 so tests can call /api/test/known-profile
+# directly to discover the stable profile UUIDs needed to register a mock printer.
+
+services:
+  mock-laminus:
+    build:
+      context: tests/e2e/mocks
+    command: uvicorn laminus_mock:app --host 0.0.0.0 --port 5000
+    ports:
+      - "5100:5000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  mock-spoolman:
+    build:
+      context: tests/e2e/mocks
+    command: uvicorn spoolman_mock:app --host 0.0.0.0 --port 7912
+    ports:
+      - "7912:7912"
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7912/api/v1/info')"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  themis:
+    image: ninjabuffalo/themis:latest
+    ports:
+      - "${HOST_PORT:-8001}:8000"
+    volumes:
+      - themis-test-data:/data
+    environment:
+      - LAMINUS_SIDECAR_URL=http://mock-laminus:5000
+      - THEMIS_LIBRARY_DIR=/data/library
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      mock-laminus:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  themis-test-data:
