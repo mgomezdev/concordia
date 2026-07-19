@@ -10,49 +10,12 @@ Run from host:
 """
 from __future__ import annotations
 
-import io
-import os
-import struct
-
 import pytest
 import requests
-
-_themis_port = os.environ.get("HOST_PORT", "8001")
-THEMIS_URL = os.environ.get("THEMIS_URL", f"http://localhost:{_themis_port}")
-
-
-# ── helpers ───────────────────────────────────────────────────────────────────
-
-def _minimal_stl() -> bytes:
-    """Valid binary STL tetrahedron (~10 mm)."""
-    triangles = [
-        ((0, 0, -1), (0, 0, 0), (10, 0, 0), (0, 10, 0)),
-        ((0, -1,  0), (0, 0, 0), (10, 0, 0), (0,  0, 10)),
-        ((-1, 0,  0), (0, 0, 0), (0, 10, 0), (0,  0, 10)),
-        ((1,  1,  1), (10, 0, 0), (0, 10, 0), (0,  0, 10)),
-    ]
-    buf = io.BytesIO()
-    buf.write(b"Concordia e2e: project_jobs test".ljust(80, b" "))
-    buf.write(struct.pack("<I", len(triangles)))
-    for normal, v1, v2, v3 in triangles:
-        for coord in (*normal, *v1, *v2, *v3):
-            buf.write(struct.pack("<f", coord))
-        buf.write(struct.pack("<H", 0))
-    return buf.getvalue()
+from helpers import THEMIS_URL, _minimal_stl
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
-
-@pytest.fixture(scope="module")
-def http() -> requests.Session:
-    s = requests.Session()
-    try:
-        resp = s.get(f"{THEMIS_URL}/api/v1/health", timeout=5)
-        resp.raise_for_status()
-    except Exception as exc:
-        pytest.skip(f"Themis not reachable at {THEMIS_URL}: {exc}")
-    return s
-
 
 @pytest.fixture
 def stl_file_id(http: requests.Session):
@@ -68,23 +31,6 @@ def stl_file_id(http: requests.Session):
     yield file_id
     try:
         http.delete(f"{THEMIS_URL}/api/v1/files/{file_id}", timeout=10)
-    except Exception:
-        pass
-
-
-@pytest.fixture
-def project_id(http: requests.Session):
-    """Create a minimal project and delete it after the test."""
-    resp = http.post(
-        f"{THEMIS_URL}/api/v1/projects",
-        json={"name": "E2E Job List Test", "order_type": "internal"},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    pid = resp.json()["id"]
-    yield pid
-    try:
-        http.delete(f"{THEMIS_URL}/api/v1/projects/{pid}", timeout=10)
     except Exception:
         pass
 

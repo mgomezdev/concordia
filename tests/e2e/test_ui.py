@@ -38,9 +38,6 @@ Requires:
 
 from __future__ import annotations
 
-import io
-import os
-import struct
 import time
 import uuid as _uuid
 from typing import Generator
@@ -48,40 +45,20 @@ from typing import Generator
 import pytest
 import requests
 from playwright.sync_api import Page, expect
-
-# ── config ────────────────────────────────────────────────────────────────────
-
-_themis_port = os.environ.get("HOST_PORT", "8001")
-THEMIS_URL = os.environ.get("THEMIS_URL", f"http://localhost:{_themis_port}")
-
-# Centauri placeholder profiles (seeded at startup)
-MACHINE_PROFILE  = "Elegoo Centauri Carbon 0.4 nozzle"
-PROCESS_PROFILE  = "0.16mm Optimal @Elegoo CC 0.4 nozzle"
-FILAMENT_PROFILE = "Elegoo PLA @ECC"
+from helpers import (
+    FILAMENT_PROFILE,
+    MACHINE_PROFILE,
+    PROCESS_PROFILE,
+    THEMIS_URL,
+    _find_centauri_placeholder_id,
+    _minimal_stl,
+)
 
 SLICE_TIMEOUT_MS = 300_000   # 5 min — OrcaSlicer is slow in Docker
 NAV_TIMEOUT_MS   = 10_000
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
-
-def _minimal_stl() -> bytes:
-    """Minimal valid binary STL tetrahedron (~10 mm)."""
-    triangles = [
-        ((0, 0, -1), (0, 0, 0),  (10, 0, 0), (0, 10, 0)),
-        ((0, -1,  0), (0, 0, 0), (10, 0, 0), (0,  0, 10)),
-        ((-1, 0,  0), (0, 0, 0), (0, 10, 0), (0,  0, 10)),
-        ((1,  1,  1), (10, 0, 0),(0, 10, 0), (0,  0, 10)),
-    ]
-    buf = io.BytesIO()
-    buf.write(b"Concordia UI e2e".ljust(80, b" "))
-    buf.write(struct.pack("<I", len(triangles)))
-    for normal, v1, v2, v3 in triangles:
-        for coord in (*normal, *v1, *v2, *v3):
-            buf.write(struct.pack("<f", coord))
-        buf.write(struct.pack("<H", 0))
-    return buf.getvalue()
-
 
 def _uniq(prefix: str) -> str:
     """Short unique suffix so parallel runs don't collide."""
@@ -124,15 +101,6 @@ def _delete_project_via_api(project_id: int) -> None:
         requests.delete(_api(f"/projects/{project_id}"), timeout=10)
     except Exception:
         pass
-
-
-def _find_centauri_placeholder_id() -> int | None:
-    r = requests.get(_api("/printers"), timeout=10)
-    r.raise_for_status()
-    for p in r.json():
-        if "Centauri Carbon" in p["name"] and "placeholder" in p["name"].lower():
-            return p["id"]
-    return None
 
 
 def _goto(page: Page, path: str) -> None:
@@ -196,7 +164,7 @@ def test_laminus_status_bubble_visible(page_ready: Page) -> None:
     page = page_ready
     _goto(page, "/queue")
     # Footer contains the service bubble — it's always rendered
-    bubble = page.locator("text=Laminus")
+    bubble = page.locator("button:has-text('Laminus')")
     expect(bubble).to_be_visible(timeout=NAV_TIMEOUT_MS)
 
 
@@ -499,8 +467,8 @@ def test_verify_slice_via_queue_ui(page_ready: Page, stl_file: int) -> None:
 
     try:
         _goto(page, "/queue")
-        page.wait_for_selector(".card", timeout=NAV_TIMEOUT_MS)
-        page.locator(".card").first.click()
+        page.wait_for_selector(f"text=#{job_id}", timeout=NAV_TIMEOUT_MS)
+        page.locator(".card").filter(has_text=f"#{job_id}").first.click()
 
         expect(page.locator("text=Verify slicing")).to_be_visible(timeout=8_000)
         page.locator("button", has_text="Verify slicing").first.click()
@@ -512,7 +480,7 @@ def test_verify_slice_via_queue_ui(page_ready: Page, stl_file: int) -> None:
         page.locator("button", has_text="Run test slice").click()
 
         # Wait for the result banner (up to 5 min)
-        result = page.locator("text=Sliced OK, text=Slice failed").first
+        result = page.locator("text=Sliced OK").or_(page.locator("text=Slice failed"))
         expect(result).to_be_visible(timeout=SLICE_TIMEOUT_MS)
 
         # Assert success

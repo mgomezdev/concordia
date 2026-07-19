@@ -25,89 +25,22 @@ Or from the host (HOST_PORT=8001 as set in .env):
 
 from __future__ import annotations
 
-import io
-import os
-import struct
-
 import pytest
 import requests
-
-_themis_port = os.environ.get("HOST_PORT", "8001")
-THEMIS_URL = os.environ.get("THEMIS_URL", f"http://localhost:{_themis_port}")
-
-MACHINE_PROFILE  = "Elegoo Centauri Carbon 0.4 nozzle"
-PROCESS_PROFILE  = "0.16mm Optimal @Elegoo CC 0.4 nozzle"
-FILAMENT_PROFILE = "Elegoo PLA @ECC"
+from helpers import (
+    FILAMENT_PROFILE,
+    MACHINE_PROFILE,
+    PROCESS_PROFILE,
+    THEMIS_URL,
+    _drain_active_jobs_for_printer,
+    _find_centauri_placeholder_id,
+    _minimal_stl,
+)
 
 SLICE_TIMEOUT_S = 300   # slicing can take 2–3 min inside Docker
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
-
-def _minimal_stl() -> bytes:
-    """Return a valid binary STL tetrahedron (~10mm) for test slicing."""
-    triangles = [
-        ((0, 0, -1), (0, 0, 0), (10, 0, 0), (0, 10, 0)),
-        ((0, -1,  0), (0, 0, 0), (10, 0, 0), (0,  0, 10)),
-        ((-1, 0,  0), (0, 0, 0), (0, 10, 0), (0,  0, 10)),
-        ((1,  1,  1), (10, 0, 0), (0, 10, 0), (0,  0, 10)),
-    ]
-    buf = io.BytesIO()
-    # Binary STL header must be exactly 80 bytes.
-    header = b"Concordia e2e: Centauri 0.4mm PLA 0.16mm Optimal"
-    buf.write(header.ljust(80, b" "))
-    buf.write(struct.pack("<I", len(triangles)))
-    for normal, v1, v2, v3 in triangles:
-        for coord in (*normal, *v1, *v2, *v3):
-            buf.write(struct.pack("<f", coord))
-        buf.write(struct.pack("<H", 0))
-    return buf.getvalue()
-
-
-def _find_placeholder_printer_id(session: requests.Session) -> int:
-    resp = session.get(f"{THEMIS_URL}/api/v1/printers")
-    resp.raise_for_status()
-    for p in resp.json():
-        if "Centauri Carbon" in p["name"] and "placeholder" in p["name"].lower():
-            return p["id"]
-    pytest.fail("Placeholder Elegoo Centauri Carbon printer not found — is Themis seeding it?")
-
-
-def _drain_active_jobs_for_printer(session: requests.Session, printer_id: int) -> None:
-    """Cancel any non-terminal jobs assigned to or targeting the placeholder printer.
-
-    Without this, a 'sliced' job left over from a previous test run blocks the
-    queue engine from slicing the new test job (one sliced-job-per-printer limit).
-    """
-    resp = session.get(f"{THEMIS_URL}/api/v1/jobs", timeout=10)
-    resp.raise_for_status()
-    active_statuses = {"queued", "blocked", "slicing", "sliced", "uploading", "printing"}
-    for job in resp.json():
-        if job["status"] not in active_statuses:
-            continue
-        if job.get("assigned_printer_id") == printer_id:
-            session.post(f"{THEMIS_URL}/api/v1/jobs/{job['id']}/cancel", timeout=10)
-            continue
-        # Also cancel queued/blocked jobs targeted at this printer via printer_configs.
-        detail = session.get(f"{THEMIS_URL}/api/v1/jobs/{job['id']}/details", timeout=10)
-        if detail.ok:
-            cfgs = detail.json().get("printer_configs", [])
-            if any(c.get("printer_id") == printer_id for c in cfgs):
-                session.post(f"{THEMIS_URL}/api/v1/jobs/{job['id']}/cancel", timeout=10)
-
-
 # ── fixtures ──────────────────────────────────────────────────────────────────
-
-@pytest.fixture(scope="module")
-def http() -> requests.Session:
-    s = requests.Session()
-    try:
-        resp = s.get(f"{THEMIS_URL}/api/v1/health", timeout=5)
-        resp.raise_for_status()
-    except Exception as exc:
-        pytest.skip(f"Themis not reachable at {THEMIS_URL}: {exc}")
-    return s
-
 
 @pytest.fixture
 def uploaded_file_id(http: requests.Session) -> int:
@@ -129,23 +62,6 @@ def uploaded_file_id(http: requests.Session) -> int:
         pass
 
 
-@pytest.fixture
-def project_id(http: requests.Session):
-    """Create a minimal project and clean up after the test."""
-    resp = http.post(
-        f"{THEMIS_URL}/api/v1/projects",
-        json={"name": "E2E Centauri Slice Test", "order_type": "internal"},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    pid = resp.json()["id"]
-    yield pid
-    try:
-        http.delete(f"{THEMIS_URL}/api/v1/projects/{pid}", timeout=10)
-    except Exception:
-        pass
-
-
 # ── test ─────────────────────────────────────────────────────────────────────
 
 @pytest.mark.integration
@@ -160,7 +76,9 @@ def test_centauri_slice_reaches_sliced_status(
       2. Create a job against the 3MF with explicit Centauri profiles
       3. verify-slice: queued → slicing → sliced  (no upload, printer is offline)
     """
-    printer_id = _find_placeholder_printer_id(http)
+    printer_id = _find_centauri_placeholder_id(http)
+    if printer_id is None:
+        pytest.fail("Placeholder Elegoo Centauri Carbon printer not found — is Themis seeding it?")
 
     # Cancel any leftover active jobs for this printer so the queue engine
     # doesn't skip slicing the new test job (one pending sliced-job-per-printer).

@@ -1,6 +1,9 @@
 # Standalone test stack with mock services.
 # Replaces real Laminus with a fast in-process mock and adds mock Spoolman.
 #
+# Themis data (/data) is mounted as tmpfs — always fresh on stack startup.
+# No `down -v` required between runs; just `docker compose -f ... down && up`.
+#
 # Usage:
 #   docker compose -f docker-compose.test.yml up --build
 #
@@ -42,11 +45,12 @@ services:
     restart: unless-stopped
 
   themis:
-    image: ninjabuffalo/themis:latest
+    image: ${THEMIS_IMAGE:-ninjabuffalo/themis:latest}
     ports:
       - "${HOST_PORT:-8001}:8000"
     volumes:
-      - themis-test-data:/data
+      - type: tmpfs
+        target: /data
     environment:
       - LAMINUS_SIDECAR_URL=http://mock-laminus:5000
       - SPOOLMAN_URL=http://mock-spoolman:7912
@@ -64,5 +68,3 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-volumes:
-  themis-test-data:

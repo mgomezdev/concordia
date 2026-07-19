@@ -29,19 +29,21 @@ from typing import Any
 
 import pytest
 import requests
+from helpers import (
+    FILAMENT_PROFILE,
+    MACHINE_PROFILE,
+    PROCESS_PROFILE,
+    THEMIS_URL,
+    _drain_active_jobs_for_printer,
+    _find_centauri_placeholder_id,
+)
 
 _ordinus_port = os.environ.get("ORDINUS_PORT", "3001")
-_themis_port  = os.environ.get("HOST_PORT",   "8001")
 ORDINUS_URL = os.environ.get("ORDINUS_URL", f"http://localhost:{_ordinus_port}")
-THEMIS_URL  = os.environ.get("THEMIS_URL",  f"http://localhost:{_themis_port}")
 
 BOM_TIMEOUT_S    = 120
 SLICE_TIMEOUT_S  = 300
 POLL_INTERVAL_S  = 5
-
-MACHINE_PROFILE  = "Elegoo Centauri Carbon 0.4 nozzle"
-PROCESS_PROFILE  = "0.16mm Optimal @Elegoo CC 0.4 nozzle"
-FILAMENT_PROFILE = "Elegoo PLA @ECC"
 
 
 # -- helpers ------------------------------------------------------------------
@@ -129,31 +131,6 @@ def _themis_project(project_id: int) -> dict[str, Any]:
 def _themis_project_file_ids(project_id: int) -> list[int]:
     return sorted(item["file_id"] for item in _themis_project(project_id).get("items", []))
 
-
-def _find_centauri_placeholder_printer_id(session: requests.Session) -> int:
-    resp = session.get(f"{THEMIS_URL}/api/v1/printers", timeout=10)
-    resp.raise_for_status()
-    for p in resp.json():
-        if "Centauri Carbon" in p["name"] and "placeholder" in p["name"].lower():
-            return p["id"]
-    pytest.skip("Placeholder Elegoo Centauri Carbon printer not found in Themis -- is it seeded?")
-
-
-def _drain_active_jobs_for_printer(session: requests.Session, printer_id: int) -> None:
-    resp = session.get(f"{THEMIS_URL}/api/v1/jobs", timeout=10)
-    resp.raise_for_status()
-    active_statuses = {"queued", "blocked", "slicing", "sliced", "uploading", "printing"}
-    for job in resp.json():
-        if job["status"] not in active_statuses:
-            continue
-        if job.get("assigned_printer_id") == printer_id:
-            session.post(f"{THEMIS_URL}/api/v1/jobs/{job['id']}/cancel", timeout=10)
-            continue
-        detail = session.get(f"{THEMIS_URL}/api/v1/jobs/{job['id']}/details", timeout=10)
-        if detail.ok:
-            cfgs = detail.json().get("printer_configs", [])
-            if any(c.get("printer_id") == printer_id for c in cfgs):
-                session.post(f"{THEMIS_URL}/api/v1/jobs/{job['id']}/cancel", timeout=10)
 
 
 # -- fixtures -----------------------------------------------------------------
@@ -299,7 +276,9 @@ def test_ordinus_layout_slices_on_elegoo_centauri(
     uploaded_file_id = file_ids[0]
 
     # Find the Elegoo Centauri Carbon placeholder printer in Themis
-    printer_id = _find_centauri_placeholder_printer_id(themis)
+    printer_id = _find_centauri_placeholder_id(themis)
+    if printer_id is None:
+        pytest.skip("Placeholder Elegoo Centauri Carbon printer not found in Themis -- is it seeded?")
 
     # Clear any leftover active jobs so the queue engine can slice our new job
     _drain_active_jobs_for_printer(themis, printer_id)
