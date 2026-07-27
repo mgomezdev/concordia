@@ -1,15 +1,15 @@
 # Build from local source instead of pulling from Docker Hub.
-# Requires sibling repos ../orca (laminus), ../themis, and ../ordinus to be present.
+# Requires sibling repos ../laminus, ../themis, and ../ordinus to be present.
 #
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.local.yml up
 
 services:
   laminus:
-    build: ../orca
+    build: ../laminus
     volumes:
-      - ../orca/config:/config
-      - ../orca/data:/data
+      - ../laminus/config:/config
+      - ../laminus/data:/data
 
   themis:
     build: ../themis

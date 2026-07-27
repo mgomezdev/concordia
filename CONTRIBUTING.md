@@ -37,7 +37,7 @@ Three services, all managed by Docker Compose:
 
 | Service | Repo | Role | Port |
 |---|---|---|---|
-| `laminus` | `../orca` | OrcaSlicer sidecar — profile catalog, slicing, 3MF packing | Internal :5000 only |
+| `laminus` | `../laminus` | OrcaSlicer sidecar — profile catalog, slicing, 3MF packing | Internal :5000 only |
 | `themis` | `../themis` | Print queue, job lifecycle, printer management, REST API + React frontend | `HOST_PORT` (default 8001) |
 | `ordinus` | `../ordinus` | Gridfinity bin layout tool, BOM generation, Themis integration | `ORDINUS_PORT` (default 3002) |
 
