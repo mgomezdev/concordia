@@ -35,6 +35,7 @@ services:
     environment:
       - LAMINUS_SIDECAR_URL=http://laminus:5000
       - THEMIS_LIBRARY_DIR=/data/library
+      - THEMIS_BOOTSTRAP_KEY=${THEMIS_BOOTSTRAP_KEY:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 10s

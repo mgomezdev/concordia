@@ -21,6 +21,22 @@ MACHINE_PROFILE  = "Elegoo Centauri Carbon 0.4 nozzle"
 PROCESS_PROFILE  = "0.16mm Optimal @Elegoo CC 0.4 nozzle"
 FILAMENT_PROFILE = "Elegoo PLA @ECC"
 
+# Themis gates every /api/v1 route behind an API key once api_keys is non-empty
+# (the "bootstrap window" only stays open while the table is empty — the first
+# browser page load in test_ui.py mints a key and closes it for the rest of the
+# run, and for any future run against the same volume). THEMIS_BOOTSTRAP_KEY is
+# Themis's break-glass full-scope key — set it in the same .env used by
+# docker-compose.yml so the stack and the tests share one value.
+THEMIS_API_KEY = os.environ.get("THEMIS_BOOTSTRAP_KEY", "")
+
+
+def authed_session() -> requests.Session:
+    """A requests.Session pre-authenticated with THEMIS_API_KEY, if set."""
+    s = requests.Session()
+    if THEMIS_API_KEY:
+        s.headers.update({"X-Api-Key": THEMIS_API_KEY})
+    return s
+
 
 def _minimal_stl() -> bytes:
     """Valid binary STL tetrahedron (~10 mm) for test slicing."""
@@ -42,7 +58,7 @@ def _minimal_stl() -> bytes:
 
 def _find_centauri_placeholder_id(session: requests.Session | None = None) -> int | None:
     """Return the printer ID of the Elegoo Centauri Carbon placeholder, or None."""
-    s = session or requests.Session()
+    s = session or authed_session()
     resp = s.get(f"{THEMIS_URL}/api/v1/printers", timeout=10)
     resp.raise_for_status()
     for p in resp.json():

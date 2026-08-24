@@ -131,6 +131,8 @@ def test_centauri_slice_reaches_sliced_status(
                     "printer_id": printer_id,
                     "print_profile": PROCESS_PROFILE,
                     "filament_profile": FILAMENT_PROFILE,
+                    "filament_type": "any",
+                    "filament_color": "any",
                 }
             ],
         },

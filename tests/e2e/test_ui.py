@@ -43,19 +43,26 @@ import uuid as _uuid
 from typing import Generator
 
 import pytest
-import requests
 from playwright.sync_api import Page, expect
 from helpers import (
     FILAMENT_PROFILE,
     MACHINE_PROFILE,
     PROCESS_PROFILE,
+    THEMIS_API_KEY,
     THEMIS_URL,
     _find_centauri_placeholder_id,
     _minimal_stl,
+    authed_session,
 )
 
 SLICE_TIMEOUT_MS = 300_000   # 5 min — OrcaSlicer is slow in Docker
 NAV_TIMEOUT_MS   = 10_000
+
+# Setup/teardown calls in this file go through the REST API directly rather than
+# the UI (see module docstring) — they need the same break-glass key the browser
+# pages get seeded with below, since Themis now gates every /api/v1 route once
+# api_keys is non-empty (see helpers.authed_session for why).
+_session = authed_session()
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -72,7 +79,7 @@ def _api(path: str) -> str:
 def _upload_stl_via_api(name: str | None = None) -> int:
     """Upload a minimal STL to Job Uploads and return its file ID."""
     name = name or _uniq("ui-test") + ".stl"
-    r = requests.post(
+    r = _session.post(
         _api("/files/upload"),
         files={"file": (name, _minimal_stl(), "application/octet-stream")},
         data={"folder": "/Job Uploads"},
@@ -84,21 +91,21 @@ def _upload_stl_via_api(name: str | None = None) -> int:
 
 def _delete_file_via_api(file_id: int) -> None:
     try:
-        requests.delete(_api(f"/files/{file_id}"), timeout=10)
+        _session.delete(_api(f"/files/{file_id}"), timeout=10)
     except Exception:
         pass
 
 
 def _cancel_job_via_api(job_id: int) -> None:
     try:
-        requests.post(_api(f"/jobs/{job_id}/cancel"), timeout=10)
+        _session.post(_api(f"/jobs/{job_id}/cancel"), timeout=10)
     except Exception:
         pass
 
 
 def _delete_project_via_api(project_id: int) -> None:
     try:
-        requests.delete(_api(f"/projects/{project_id}"), timeout=10)
+        _session.delete(_api(f"/projects/{project_id}"), timeout=10)
     except Exception:
         pass
 
@@ -115,15 +122,26 @@ def _goto(page: Page, path: str) -> None:
 def alive() -> None:
     """Skip the whole module if Themis is not reachable."""
     try:
-        requests.get(_api("/health"), timeout=5).raise_for_status()
+        _session.get(_api("/health"), timeout=5).raise_for_status()
     except Exception as exc:
         pytest.skip(f"Themis not reachable at {THEMIS_URL}: {exc}")
 
 
 @pytest.fixture()
 def page_ready(page: Page, alive) -> Page:  # noqa: ARG001
-    """Return a Playwright page pointed at the Themis UI."""
+    """Return a Playwright page pointed at the Themis UI.
+
+    Seeds `themis.apiKey` into localStorage before any navigation so AuthGate
+    finds a valid key immediately instead of hitting the bootstrap POST (which
+    only succeeds once, on a fresh api_keys table) or falling to the manual
+    key-entry screen. Uses the same THEMIS_BOOTSTRAP_KEY break-glass key the
+    stack is started with — see helpers.authed_session.
+    """
     page.set_default_timeout(NAV_TIMEOUT_MS)
+    if THEMIS_API_KEY:
+        page.add_init_script(
+            f"window.localStorage.setItem('themis.apiKey', {THEMIS_API_KEY!r});"
+        )
     return page
 
 
@@ -220,7 +238,7 @@ def test_file_upload_via_ui(page_ready: Page) -> None:
     finally:
         tmp.unlink(missing_ok=True)
         # Clean up: find the uploaded file via API and delete it
-        resp = requests.get(_api("/files"), timeout=10)
+        resp = _session.get(_api("/files"), timeout=10)
         if resp.ok:
             for f in resp.json():
                 if "upload-ui-test" in (f.get("original_filename") or ""):
@@ -267,7 +285,7 @@ def test_file_folder_create_and_delete(page_ready: Page) -> None:
 
     # Clean up via API
     try:
-        requests.delete(
+        _session.delete(
             _api("/files/folders"),
             json={"path": f"/{folder_name}"},
             timeout=10,
@@ -381,7 +399,7 @@ def test_queue_detail_panel_opens(page_ready: Page, stl_file: int) -> None:
         pytest.skip("Placeholder Centauri printer not found")
 
     # Create job via API so we can control its parameters precisely
-    resp = requests.post(
+    resp = _session.post(
         _api("/jobs"),
         json={
             "uploaded_file_id": stl_file,
@@ -390,6 +408,8 @@ def test_queue_detail_panel_opens(page_ready: Page, stl_file: int) -> None:
                 "printer_id": printer_id,
                 "print_profile": PROCESS_PROFILE,
                 "filament_profile": FILAMENT_PROFILE,
+                "filament_type": "any",
+                "filament_color": "any",
             }],
         },
         timeout=15,
@@ -442,14 +462,14 @@ def test_verify_slice_via_queue_ui(page_ready: Page, stl_file: int) -> None:
         pytest.skip("Placeholder Centauri printer not found")
 
     # Drain active jobs so the queue engine has room
-    drain_resp = requests.get(_api("/jobs"), timeout=10)
+    drain_resp = _session.get(_api("/jobs"), timeout=10)
     if drain_resp.ok:
         active = {"queued", "blocked", "slicing", "sliced"}
         for j in drain_resp.json():
             if j["status"] in active and j.get("assigned_printer_id") == printer_id:
                 _cancel_job_via_api(j["id"])
 
-    resp = requests.post(
+    resp = _session.post(
         _api("/jobs"),
         json={
             "uploaded_file_id": stl_file,
@@ -458,6 +478,8 @@ def test_verify_slice_via_queue_ui(page_ready: Page, stl_file: int) -> None:
                 "printer_id": printer_id,
                 "print_profile": PROCESS_PROFILE,
                 "filament_profile": FILAMENT_PROFILE,
+                "filament_type": "any",
+                "filament_color": "any",
             }],
         },
         timeout=15,
@@ -593,7 +615,7 @@ def test_project_create_via_ui(page_ready: Page, stl_file: int) -> None:
     finally:
         if project_id:
             # Cancel generated jobs then delete project
-            jobs_resp = requests.get(_api(f"/projects/{project_id}/jobs"), timeout=10)
+            jobs_resp = _session.get(_api(f"/projects/{project_id}/jobs"), timeout=10)
             if jobs_resp.ok:
                 for j in jobs_resp.json():
                     _cancel_job_via_api(j["id"])
@@ -611,7 +633,7 @@ def test_project_detail_shows_job_list(page_ready: Page, stl_file: int) -> None:
     page = page_ready
 
     # Create via API for speed
-    proj_resp = requests.post(
+    proj_resp = _session.post(
         _api("/projects"),
         json={"name": _uniq("E2E Detail Test"), "order_type": "internal"},
         timeout=10,
@@ -620,13 +642,13 @@ def test_project_detail_shows_job_list(page_ready: Page, stl_file: int) -> None:
     project_id = proj_resp.json()["id"]
 
     try:
-        requests.post(
+        _session.post(
             _api(f"/projects/{project_id}/items"),
             json={"file_id": stl_file, "quantity": 1, "filament_type": "any", "filament_color": "any"},
             timeout=10,
         ).raise_for_status()
 
-        gen = requests.post(
+        gen = _session.post(
             _api(f"/projects/{project_id}/generate"),
             json={"eligible_printer_ids": []},
             timeout=60,
@@ -645,7 +667,7 @@ def test_project_detail_shows_job_list(page_ready: Page, stl_file: int) -> None:
         page.wait_for_selector("text=Jobs", timeout=10_000)
 
     finally:
-        jobs_resp = requests.get(_api(f"/projects/{project_id}/jobs"), timeout=10)
+        jobs_resp = _session.get(_api(f"/projects/{project_id}/jobs"), timeout=10)
         if jobs_resp.ok:
             for j in jobs_resp.json():
                 _cancel_job_via_api(j["id"])
@@ -742,7 +764,7 @@ def test_settings_operator_name_roundtrip(page_ready: Page) -> None:
     # Reload and verify the sidebar shows the new name
     _goto(page, "/queue")
     # Verify the saved value persists by reading the queue config via API.
-    cfg = requests.get(_api("/settings/queue"), timeout=5)
+    cfg = _session.get(_api("/settings/queue"), timeout=5)
     if cfg.ok and cfg.content:
         saved = cfg.json().get("operator_name", "")
         assert new_name in (saved or ""), (
@@ -846,7 +868,7 @@ def test_orders_create_edit_delete(page_ready: Page) -> None:
         expect(page.locator(f"text={order_name}")).to_be_visible(timeout=8_000)
 
         # Capture ID from the API (order is stored by title).
-        resp = requests.get(_api("/orders"), timeout=10)
+        resp = _session.get(_api("/orders"), timeout=10)
         if resp.ok:
             for o in resp.json():
                 if order_name in (o.get("title") or ""):
@@ -878,7 +900,7 @@ def test_orders_create_edit_delete(page_ready: Page) -> None:
     finally:
         if order_id:
             try:
-                requests.delete(_api(f"/orders/{order_id}"), timeout=10)
+                _session.delete(_api(f"/orders/{order_id}"), timeout=10)
             except Exception:
                 pass
 
@@ -904,7 +926,7 @@ def test_queue_shows_laminus_warning_when_not_ready(page_ready: Page) -> None:
 
     # The QueueScreen always polls catalog/status. If Laminus is down the banner
     # renders with text about the sidecar being unreachable.
-    status = requests.get(_api("/laminus/catalog/status"), timeout=8).json()
+    status = _session.get(_api("/laminus/catalog/status"), timeout=8).json()
     laminus_up = status.get("laminus") is not None
 
     if laminus_up:
@@ -989,7 +1011,7 @@ def test_file_download_link_present(page_ready: Page, stl_file: int) -> None:
     page = page_ready
     # Direct API check — download endpoint is not otherwise testable in a
     # headless browser without intercepting the download dialog
-    resp = requests.get(_api(f"/files/{stl_file}/download"), timeout=15, stream=True)
+    resp = _session.get(_api(f"/files/{stl_file}/download"), timeout=15, stream=True)
     assert resp.status_code == 200, f"Download returned {resp.status_code}"
     assert int(resp.headers.get("Content-Length", "0")) > 0 or resp.content
 
@@ -1028,7 +1050,7 @@ def test_fleet_backup_download(page_ready: Page) -> None:
     expect(page.locator("button", has_text="Download backup")).to_be_visible(timeout=NAV_TIMEOUT_MS)
 
     # Verify the backing API endpoint returns parseable JSON
-    resp = requests.get(_api("/settings/fleet-backup"), timeout=10)
+    resp = _session.get(_api("/settings/fleet-backup"), timeout=10)
     assert resp.status_code == 200
     payload = resp.json()
     assert "printers" in payload, f"Expected 'printers' key in backup payload: {payload}"

@@ -5,12 +5,12 @@ import uuid
 import pytest
 import requests
 
-from helpers import LAMINUS_URL, THEMIS_URL, _fetch_known_profile
+from helpers import LAMINUS_URL, THEMIS_URL, _fetch_known_profile, authed_session
 
 
 @pytest.fixture(scope="session")
 def http(request) -> requests.Session:
-    s = requests.Session()
+    s = authed_session()
     try:
         s.get(f"{THEMIS_URL}/api/v1/health", timeout=5).raise_for_status()
     except Exception as exc:
@@ -26,7 +26,7 @@ def seed_test_data(request) -> None:
 
     from seed import PRINTERS
 
-    s = requests.Session()
+    s = authed_session()
     try:
         s.get(f"{THEMIS_URL}/api/v1/health", timeout=5).raise_for_status()
     except Exception as exc:
