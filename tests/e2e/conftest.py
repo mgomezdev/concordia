@@ -32,11 +32,6 @@ def seed_test_data(request) -> None:
     except Exception as exc:
         pytest.skip(f"Themis not reachable for seeding: {exc}")
 
-    try:
-        known_profile = _fetch_known_profile(LAMINUS_URL)
-    except Exception:
-        known_profile = {}
-
     resp = s.get(f"{THEMIS_URL}/api/v1/printers", timeout=10)
     resp.raise_for_status()
     existing = {p["name"]: p["id"] for p in resp.json()}
@@ -46,9 +41,14 @@ def seed_test_data(request) -> None:
             printer_id = existing[pdef["name"]]
         else:
             payload = {k: v for k, v in pdef.items() if not k.startswith("_")}
-            if pdef.get("_inject_laminus_profiles") and known_profile.get("machine_name"):
-                payload["orca_printer_profiles"] = [known_profile["machine_name"]]
-                payload["current_orca_printer_profile"] = known_profile["machine_name"]
+            if pdef.get("_inject_laminus_profiles"):
+                try:
+                    known_profile = _fetch_known_profile(LAMINUS_URL, pdef.get("_known_machine_name"))
+                except Exception:
+                    known_profile = {}
+                if known_profile.get("machine_name"):
+                    payload["orca_printer_profiles"] = [known_profile["machine_name"]]
+                    payload["current_orca_printer_profile"] = known_profile["machine_name"]
             resp = s.post(f"{THEMIS_URL}/api/v1/printers", json=payload, timeout=10)
             resp.raise_for_status()
             printer_id = resp.json()["id"]
