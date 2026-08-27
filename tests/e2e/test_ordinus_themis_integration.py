@@ -191,18 +191,24 @@ def test_resend_same_layout_reuses_file_ids(
     themis: requests.Session,
     library_item: tuple[str, dict[str, Any]],
 ) -> None:
-    """Resending the same layout to Themis reuses the same library file IDs (per-layout dedup)."""
+    """Resending the same layout resumes the existing Themis project (no duplicate
+    project, no duplicate items) -- see themis.controller.ts's resume-on-retry design."""
     lib_id, item = library_item
 
     layout_id = _create_layout(ordinus, "E2E: resend dedup test", lib_id, item, quantity=1)
     _generate_and_wait(ordinus, layout_id, lib_id, item, quantity=1)
 
-    pid_first  = _send_to_themis(ordinus, layout_id)
-    pid_second = _send_to_themis(ordinus, layout_id)
+    pid_first = _send_to_themis(ordinus, layout_id)
+    file_ids_after_first = _themis_project_file_ids(pid_first)
 
-    assert pid_first != pid_second, "Each send should create a new Themis project"
-    assert _themis_project_file_ids(pid_first) == _themis_project_file_ids(pid_second), (
-        "Resending the same layout must reuse Themis library file IDs -- no duplicates"
+    pid_second = _send_to_themis(ordinus, layout_id)
+    file_ids_after_second = _themis_project_file_ids(pid_second)
+
+    assert pid_first == pid_second, (
+        "Resending the same layout should resume the existing Themis project, not create a new one"
+    )
+    assert file_ids_after_first == file_ids_after_second, (
+        "Resending the same layout must not add duplicate items to the Themis project"
     )
 
 
