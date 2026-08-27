@@ -79,7 +79,8 @@ services:
       - "${ORDINUS_PORT:-3002}:80"
     environment:
       - THEMIS_URL=http://themis:8000
-      - DB_PATH=:memory:
+      # Quoted: the trailing colon makes YAML read this as a mapping, not a string.
+      - "DB_PATH=:memory:"
       - NODE_ENV=test
       - LOG_LEVEL=warn
       - IMAGE_DIR=/tmp/ordinus/images
