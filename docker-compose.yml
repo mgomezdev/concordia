@@ -3,15 +3,21 @@
 #
 # Build from local source (dev):
 #   docker compose -f docker-compose.yml -f docker-compose.local.yml up
+#
+# Bind-mount to ./<app> instead of named volumes (prod):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up
 
 services:
   laminus:
     image: ninjabuffalo/laminus:latest
     volumes:
+      # user/ + plugins/ only — laminus redirects OrcaSlicer's own --datadir to a
+      # disposable scratch path (see laminus/entrypoint.sh) and symlinks just these
+      # two subtrees back in, so nothing lands in here but what's worth backing up.
       - laminus-config:/config
       - laminus-data:/data
       # Named volume caches the OrcaSlicer AppImage across restarts.
-      # Re-downloaded only when ORCA_VERSION changes.
+      # Re-downloaded only when ORCA_VERSION changes. Not worth backing up.
       - laminus-slicer:/opt/orcaslicer
     shm_size: "1gb"
     environment:

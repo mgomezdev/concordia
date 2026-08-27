@@ -1,0 +1,34 @@
+# Bind-mount all persistent state to ./<app> on the host instead of named volumes.
+# Named volumes (the base docker-compose.yml) are fine for dev/test — known, disposable
+# state, `docker compose down -v` resets cleanly. Prod wants the data visible and
+# backup-able on the host filesystem directly.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+#
+# First run creates ./laminus/, ./themis/, ./ordinus/ under the current directory.
+# Back up the whole tree; every path bind-mounted here is durable, worth keeping, and
+# safe to include in a single backup job — nothing rebuildable/cache-only is mounted
+# from the host in this overlay (laminus-slicer stays a named volume; see below).
+
+services:
+  laminus:
+    volumes:
+      # Only user/ and plugins/ ever get written here — see laminus/entrypoint.sh,
+      # which points OrcaSlicer's own --datadir at a disposable in-container scratch
+      # path and symlinks just these two subtrees back into /config.
+      - ./laminus/config:/config
+      - ./laminus/data:/data
+      # Left as a named volume deliberately: this is OrcaSlicer's own extracted
+      # AppImage, a pure build cache keyed by ORCA_VERSION, not app state. Bind-mounting
+      # it would just put a rebuildable multi-hundred-MB tree in your backup set.
+      - laminus-slicer:/opt/orcaslicer
+
+  themis:
+    volumes:
+      - ./themis:/data
+
+  ordinus:
+    volumes:
+      - ./ordinus/config:/config
+      - ./ordinus/data:/data
