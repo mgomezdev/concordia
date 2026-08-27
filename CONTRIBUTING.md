@@ -1,13 +1,13 @@
 # Concordia — Contributor Reference
 
-Concordia (this repo, `omnibus` on disk) is the orchestration layer for the full 3D printing stack. It owns `docker-compose.yml` and the cross-service E2E test suite. It contains no application code.
+Concordia (this repo, `concordia` on disk) is the orchestration layer for the full 3D printing stack. It owns `docker-compose.yml` and the cross-service E2E test suite. It contains no application code.
 
 ---
 
 ## What's in This Repo
 
 ```
-omnibus/
+concordia/
 ├── docker-compose.yml          # Production: pull images from Docker Hub
 ├── docker-compose.local.yml    # Dev override: build from local sibling repos
 ├── docker-compose.test.yml     # CI test stack: mock-laminus + Themis + Ordinus + mock-spoolman
@@ -72,7 +72,7 @@ The `docker-compose.local.yml` file overrides the image pulls with local builds 
 
 ```
 parent-dir/
-├── omnibus/          ← this repo (Concordia)
+├── concordia/        ← this repo (Concordia)
 ├── themis/
 ├── orca/             ← Laminus source (note: dir is named "orca")
 └── ordinus/              ← Ordinus source
