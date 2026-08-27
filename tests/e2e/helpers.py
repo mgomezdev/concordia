@@ -85,13 +85,20 @@ def _drain_active_jobs_for_printer(session: requests.Session, printer_id: int) -
                 session.post(f"{THEMIS_URL}/api/v1/jobs/{job['id']}/cancel", timeout=10)
 
 
-def _fetch_known_profile(laminus_url: str = LAMINUS_URL) -> dict:
+def _fetch_known_profile(laminus_url: str = LAMINUS_URL, machine_name: str | None = None) -> dict:
     """Call /api/test/known-profile on Laminus (or mock-laminus) and return the UUID triple.
 
+    Without `machine_name`: whatever machine the catalog returns first — fine for
+    a generic mock printer that doesn't care which hardware it gets.
+    With `machine_name`: the triple for that exact machine (e.g. MACHINE_PROFILE),
+    for seeding a printer whose fixtures assume a specific model's profiles.
+
     Returns: {machine_uuid, machine_name, process_uuid, process_name, filament_uuid, filament_name}
-    Raises requests.HTTPError if Laminus is unreachable or catalog not ready.
+    Raises requests.HTTPError if Laminus is unreachable, catalog not ready, or
+    (with machine_name) no matching machine is in the catalog.
     """
-    resp = requests.get(f"{laminus_url}/api/test/known-profile", timeout=10)
+    params = {"machine_name": machine_name} if machine_name is not None else None
+    resp = requests.get(f"{laminus_url}/api/test/known-profile", params=params, timeout=10)
     resp.raise_for_status()
     return resp.json()
 
