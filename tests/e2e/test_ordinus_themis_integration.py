@@ -310,6 +310,8 @@ def test_ordinus_layout_slices_on_elegoo_centauri(
                     "printer_id": printer_id,
                     "print_profile": PROCESS_PROFILE,
                     "filament_profile": FILAMENT_PROFILE,
+                    "filament_type": "any",
+                    "filament_color": "any",
                 }
             ],
         },
