@@ -2,6 +2,8 @@
 
 Concordia (this repo, `concordia` on disk) is the orchestration layer for the full 3D printing stack. It owns `docker-compose.yml` and the cross-service E2E test suite. It contains no application code.
 
+> **About this project.** This suite (Concordia, Themis, Laminus, Ordinus) is being built as an exercise in full agent-driven coding under human oversight — the goal is both a genuinely useful tool and a practical, working example of emerging techniques in prompt design, multi-agent workflows, and harnessing.
+
 ---
 
 ## What's in This Repo
