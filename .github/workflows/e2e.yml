@@ -1,0 +1,154 @@
+name: e2e (reusable)
+
+# Cross-service e2e suite, called by the app repos from their own PR workflows:
+#
+#   e2e:
+#     needs: build
+#     uses: mgomezdev/concordia/.github/workflows/e2e.yml@main
+#     with:
+#       profile: core
+#       image_artifact: themis-image
+#       themis_image: themis:ci
+#
+# Called this way the job runs inside the *caller's* workflow run, so its result
+# lands as a native check on the caller's PR and can block the merge. That is why
+# this is a `workflow_call` and not a `repository_dispatch`: no PAT to manage, no
+# hand-rolled commit-status plumbing, and artifacts uploaded by the caller's
+# earlier jobs are visible here because it is all one run.
+
+on:
+  workflow_call:
+    inputs:
+      profile:
+        description: >-
+          Which coupling to exercise. `core` starts mock-laminus + mock-spoolman
+          + themis (3 containers) for the Themis<->Laminus edge. `push` adds
+          ordinus (4) for the Ordinus->Themis edge.
+        type: string
+        required: true
+      themis_image:
+        type: string
+        default: ninjabuffalo/themis:latest
+      mock_laminus_image:
+        type: string
+        default: ninjabuffalo/laminus-mock:latest
+      ordinus_image:
+        type: string
+        default: ninjabuffalo/gridfinity-customizer:latest
+      image_artifact:
+        description: >-
+          Optional name of an artifact holding a `docker save` tarball, uploaded
+          by a caller job. Loaded before compose starts so a PR can be tested
+          against its own freshly built image without publishing it first.
+        type: string
+        default: ""
+      concordia_ref:
+        description: Which revision of the e2e suite to run.
+        type: string
+        default: main
+      timeout_minutes:
+        type: number
+        default: 25
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    # The `secrets` context cannot be read from a step-level `if`, so surface the
+    # username as an env var and branch on that instead.
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+
+    steps:
+      # `actions/checkout` defaults to the CALLER's repository. Without an
+      # explicit `repository:` this checks out themis/laminus and finds no
+      # compose files.
+      - name: Check out Concordia
+        uses: actions/checkout@v4
+        with:
+          repository: mgomezdev/concordia
+          ref: ${{ inputs.concordia_ref }}
+
+      - name: Resolve pytest marker expression
+        id: markers
+        run: |
+          case "${{ inputs.profile }}" in
+            core) echo 'expr=integration and not ordinus and not slow' >> "$GITHUB_OUTPUT" ;;
+            push) echo 'expr=integration and ordinus'                  >> "$GITHUB_OUTPUT" ;;
+            *)    echo "::error::unknown profile '${{ inputs.profile }}' (expected core or push)"; exit 1 ;;
+          esac
+
+      # Authenticated pulls when the caller passes credentials. Anonymous Docker
+      # Hub pulls share a rate limit across all GitHub runner IPs and fail
+      # intermittently; this sidesteps that until the GHCR migration completes.
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download image built by the caller
+        if: ${{ inputs.image_artifact != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.image_artifact }}
+          path: /tmp/ci-image
+
+      - name: Load image built by the caller
+        if: ${{ inputs.image_artifact != '' }}
+        run: |
+          for tar in /tmp/ci-image/*.tar; do
+            echo "loading $tar"
+            docker load --input "$tar"
+          done
+          docker image ls
+
+      - name: Configure env
+        run: cp .env.example .env
+
+      - name: Start the ${{ inputs.profile }} stack
+        env:
+          THEMIS_IMAGE: ${{ inputs.themis_image }}
+          MOCK_LAMINUS_IMAGE: ${{ inputs.mock_laminus_image }}
+          ORDINUS_IMAGE: ${{ inputs.ordinus_image }}
+        run: |
+          docker compose -f docker-compose.test.yml --profile ${{ inputs.profile }} \
+            up -d --build --wait
+          docker compose -f docker-compose.test.yml --profile ${{ inputs.profile }} ps
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install test dependencies
+        run: pip install -r requirements-test.txt
+
+      - name: Install Playwright browser
+        run: playwright install --with-deps chromium
+
+      - name: Run e2e suite
+        run: pytest tests/e2e/ --integration -m "${{ steps.markers.outputs.expr }}" -v
+
+      - name: Dump service logs
+        if: failure()
+        run: docker compose -f docker-compose.test.yml --profile ${{ inputs.profile }} logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.test.yml --profile ${{ inputs.profile }} down -v

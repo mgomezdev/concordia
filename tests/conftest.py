@@ -41,6 +41,11 @@ def pytest_configure(config):
         "markers",
         "slow: invokes OrcaSlicer; deselect with -m 'not slow'",
     )
+    config.addinivalue_line(
+        "markers",
+        "ordinus: needs the Ordinus container; deselect with -m 'not ordinus' "
+        "when running the `core` compose profile",
+    )
 
 
 def pytest_collection_modifyitems(config, items):

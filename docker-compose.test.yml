@@ -18,9 +18,22 @@
 # Ordinus API is exposed on host port 3002 (nginx → Express on :80 in container).
 # Override: ORDINUS_IMAGE=ninjabuffalo/gridfinity-customizer:local
 
+# Compose profiles keep CI spin-ups proportional to the coupling under test:
+#
+#   --profile core   mock-laminus + mock-spoolman + themis   (3 containers)
+#                    the Themis<->Laminus edge; what a Themis or Laminus PR runs
+#   --profile push   the above + ordinus                     (4 containers)
+#                    the Ordinus->Themis edge; only Ordinus PRs and Themis PRs
+#                    whose openapi.json moved an Ordinus-consumed path need it
+#
+# Pair each with the matching pytest marker expression:
+#   core -> -m "integration and not ordinus and not slow"
+#   push -> -m "integration and ordinus"
+
 services:
   mock-laminus:
     image: ${MOCK_LAMINUS_IMAGE:-ninjabuffalo/laminus-mock:latest}
+    profiles: [core, push]
     ports:
       - "5100:5000"
     environment:
@@ -34,6 +47,7 @@ services:
     restart: unless-stopped
 
   mock-spoolman:
+    profiles: [core, push]
     build:
       context: tests/e2e/mocks
     command: uvicorn spoolman_mock:app --host 0.0.0.0 --port 7912
@@ -51,6 +65,7 @@ services:
 
   themis:
     image: ${THEMIS_IMAGE:-ninjabuffalo/themis:latest}
+    profiles: [core, push]
     ports:
       - "${HOST_PORT:-8001}:8000"
     volumes:
@@ -60,6 +75,10 @@ services:
       - LAMINUS_SIDECAR_URL=http://mock-laminus:5000
       - SPOOLMAN_URL=http://mock-spoolman:7912
       - THEMIS_LIBRARY_DIR=/data/library
+      # Matches the key tests/e2e/helpers.py sends as X-Api-Key. Without it the
+      # suite depended on Themis's bootstrap window staying open, which
+      # test_ui.py's first page load closes partway through the run.
+      - THEMIS_BOOTSTRAP_KEY=${THEMIS_BOOTSTRAP_KEY:-dev-e2e-bootstrap-key}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 10s
@@ -75,6 +94,7 @@ services:
 
   ordinus:
     image: ${ORDINUS_IMAGE:-ninjabuffalo/gridfinity-customizer:latest}
+    profiles: [push]
     ports:
       - "${ORDINUS_PORT:-3002}:80"
     environment:

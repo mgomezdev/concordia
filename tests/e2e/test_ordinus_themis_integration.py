@@ -38,6 +38,10 @@ from helpers import (
     _find_centauri_placeholder_id,
 )
 
+# Every test here needs the Ordinus container, which only the `push` compose
+# profile starts. Deselected via -m "not ordinus" on the 3-container `core` run.
+pytestmark = pytest.mark.ordinus
+
 BOM_TIMEOUT_S    = 120
 SLICE_TIMEOUT_S  = 300
 POLL_INTERVAL_S  = 5
