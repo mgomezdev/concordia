@@ -1,0 +1,61 @@
+name: pr
+
+# Concordia holds no application code, so its PRs gate on two things: that the
+# unit tests still pass, and that both compose profiles still bring up a working
+# stack of published images and satisfy the e2e suite.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # tests/unit/test_mock_printer.py resolves Themis as `parents[3]/themis`,
+      # i.e. a sibling of the Concordia checkout, and skips all 20 of its tests
+      # when absent. `path:` cannot escape the workspace, so put both repos in
+      # subdirectories of it rather than checking Concordia out at the root.
+      - uses: actions/checkout@v4
+        with:
+          path: concordia
+
+      - uses: actions/checkout@v4
+        with:
+          repository: mgomezdev/themis
+          ref: develop
+          path: themis
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: concordia/requirements-test.txt
+
+      - run: pip install -r requirements-test.txt
+        working-directory: concordia
+
+      # -ra reports the skip reasons, so a regression back to "Themis sibling not
+      # present" is visible in the log instead of passing quietly.
+      - name: Run unit tests
+        working-directory: concordia
+        run: pytest tests/unit/ -v -ra
+
+  # Both edges, against the published images the stack actually ships with.
+  e2e-core:
+    uses: ./.github/workflows/e2e.yml
+    with:
+      profile: core
+      concordia_ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  e2e-push:
+    uses: ./.github/workflows/e2e.yml
+    with:
+      profile: push
+      concordia_ref: ${{ github.event.pull_request.head.sha || github.sha }}

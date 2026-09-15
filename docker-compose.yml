@@ -7,9 +7,13 @@
 # Bind-mount to ./<app> instead of named volumes (prod):
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up
 
+# Image refs are overridable so CI can pin the stack to a specific build
+# (a PR's freshly-built image, or the `develop` tag for the nightly run)
+# without editing this file. Defaults are the released Docker Hub images.
+
 services:
   laminus:
-    image: ninjabuffalo/laminus:latest
+    image: ${LAMINUS_IMAGE:-ninjabuffalo/laminus:latest}
     volumes:
       # user/ + plugins/ only — laminus redirects OrcaSlicer's own --datadir to a
       # disposable scratch path (see laminus/entrypoint.sh) and symlinks just these
@@ -33,7 +37,7 @@ services:
     restart: unless-stopped
 
   themis:
-    image: ninjabuffalo/themis:latest
+    image: ${THEMIS_IMAGE:-ninjabuffalo/themis:latest}
     ports:
       - "${HOST_PORT:-8000}:8000"
     volumes:
@@ -54,7 +58,9 @@ services:
     restart: unless-stopped
 
   ordinus:
-    image: ninjabuffalo/ordinus:latest
+    # Published as `gridfinity-customizer` by ordinus's own CI — `ninjabuffalo/ordinus`
+    # has never existed, so `docker compose up` could not pull this service.
+    image: ${ORDINUS_IMAGE:-ninjabuffalo/gridfinity-customizer:latest}
     ports:
       - "${ORDINUS_PORT:-3001}:80"
     volumes:
@@ -66,7 +72,10 @@ services:
       - THEMIS_URL=http://themis:8000
       - PUBLIC_URL=http://localhost:${ORDINUS_PORT:-3001}
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/v1/health').then(r => { if (!r.ok) process.exit(1) })"]
+      # nginx serves on :80 inside the container (see ordinus/infra/Dockerfile `EXPOSE 80`).
+      # ORDINUS_PORT is the *host* side of the mapping only — probing it in here never
+      # succeeded, so `docker compose up --wait` hung on this service.
+      test: ["CMD", "wget", "-qO-", "http://localhost/api/v1/health"]
       interval: 10s
       timeout: 5s
       retries: 3

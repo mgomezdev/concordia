@@ -1,0 +1,15 @@
+# Host-side dependencies for the e2e suite (tests/e2e/) and the unit tests.
+# These were previously documented only in prose, so CI and local runs could
+# silently disagree on versions. Install with:
+#
+#   pip install -r requirements-test.txt
+#   playwright install chromium        # browser binaries, not a pip package
+#
+pytest==8.3.4
+requests==2.32.3
+pytest-playwright==0.6.2
+
+# tests/unit/test_spoolman_contract.py drives tests/e2e/mocks/spoolman_mock.py
+# through fastapi.testclient; without these it importorskips and silently passes.
+fastapi==0.115.6
+httpx==0.28.1
