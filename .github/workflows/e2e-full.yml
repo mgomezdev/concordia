@@ -3,13 +3,17 @@ name: e2e (full, real OrcaSlicer)
 # The real stack: real Laminus, real slicing, no mocks. Two ways in:
 #
 #   1. workflow_call, from a caller's release-gate job (a develop -> main pull
-#      request in Themis). The caller passes the image it just built; every
-#      image it does NOT pass resolves to :develop, not :latest -- this is
-#      meant to gate what is about to ship, measured against the other repos'
-#      own about-to-ship state, not what is live today.
-#   2. schedule/workflow_dispatch, run standalone as a nightly canary. No
-#      caller means every image resolves to :develop, catching cross-repo
-#      drift before it ever reaches a release PR.
+#      request in Themis). The caller passes the image it just built.
+#   2. schedule/workflow_dispatch, run standalone as a nightly canary.
+#
+# Every image not supplied by a caller (or left blank on a manual dispatch)
+# resolves to Docker Hub's :latest, matching e2e.yml's own default policy and
+# for the same reason: it's the one tag every image in this stack reliably
+# publishes today. GHCR :develop looked like the more precise choice (gate
+# what's about to ship against the other repos' own about-to-ship state), but
+# laminus and gridfinity-customizer only ever publish on push to main -- they
+# have no :develop tag at all -- so that default 404'd the moment it wasn't
+# overridden. Confirmed via `docker manifest inspect` before landing this.
 #
 # Not run on every PR: slicing takes minutes and downloading the AppImage is
 # only worth caching, not eliminating (no AppImage is redistributed in this
@@ -77,8 +81,8 @@ jobs:
           repository: mgomezdev/concordia
           ref: ${{ inputs.concordia_ref || 'main' }}
 
-      # Every image not supplied by a caller (or left blank on a manual
-      # dispatch) resolves to :develop, not :latest -- see the header comment.
+      # See the header comment for why these fall back to Docker Hub :latest,
+      # not GHCR :develop.
       - name: Resolve image refs
         id: images
         run: |
@@ -86,9 +90,9 @@ jobs:
           laminus="${{ inputs.laminus_image }}"
           ordinus="${{ inputs.ordinus_image }}"
 
-          [ -z "$themis" ]  && themis="ghcr.io/mgomezdev/themis:develop"
-          [ -z "$laminus" ] && laminus="ghcr.io/mgomezdev/laminus:develop"
-          [ -z "$ordinus" ] && ordinus="ghcr.io/mgomezdev/gridfinity-customizer:develop"
+          [ -z "$themis" ]  && themis="ninjabuffalo/themis:latest"
+          [ -z "$laminus" ] && laminus="ninjabuffalo/laminus:latest"
+          [ -z "$ordinus" ] && ordinus="ninjabuffalo/gridfinity-customizer:latest"
 
           echo "themis=$themis"   >> "$GITHUB_OUTPUT"
           echo "laminus=$laminus" >> "$GITHUB_OUTPUT"
