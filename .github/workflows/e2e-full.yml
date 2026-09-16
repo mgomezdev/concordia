@@ -1,0 +1,175 @@
+name: e2e (full, real OrcaSlicer)
+
+# The real stack: real Laminus, real slicing, no mocks. Two ways in:
+#
+#   1. workflow_call, from a caller's release-gate job (a develop -> main pull
+#      request in Themis). The caller passes the image it just built; every
+#      image it does NOT pass resolves to :develop, not :latest -- this is
+#      meant to gate what is about to ship, measured against the other repos'
+#      own about-to-ship state, not what is live today.
+#   2. schedule/workflow_dispatch, run standalone as a nightly canary. No
+#      caller means every image resolves to :develop, catching cross-repo
+#      drift before it ever reaches a release PR.
+#
+# Not run on every PR: slicing takes minutes and downloading the AppImage is
+# only worth caching, not eliminating (no AppImage is redistributed in this
+# repo or its images -- see docker-compose.ci.yml -- to stay clear of
+# OrcaSlicer's own licensing terms).
+
+on:
+  workflow_call:
+    inputs:
+      themis_image:
+        type: string
+        default: ""
+      laminus_image:
+        type: string
+        default: ""
+      ordinus_image:
+        type: string
+        default: ""
+      image_artifact:
+        description: >-
+          Optional name of an artifact holding a `docker save` tarball,
+          uploaded by a caller job, loaded before compose starts.
+        type: string
+        default: ""
+      concordia_ref:
+        type: string
+        default: main
+      timeout_minutes:
+        type: number
+        default: 50
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
+  schedule:
+    - cron: "0 9 * * *" # nightly, ~4am US Central
+  workflow_dispatch:
+    inputs:
+      themis_image:
+        type: string
+        default: ""
+      laminus_image:
+        type: string
+        default: ""
+      ordinus_image:
+        type: string
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.concordia_ref || 'standalone' }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  e2e-full:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes || 50 }}
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+
+    steps:
+      - name: Check out Concordia
+        uses: actions/checkout@v4
+        with:
+          repository: mgomezdev/concordia
+          ref: ${{ inputs.concordia_ref || 'main' }}
+
+      # Every image not supplied by a caller (or left blank on a manual
+      # dispatch) resolves to :develop, not :latest -- see the header comment.
+      - name: Resolve image refs
+        id: images
+        run: |
+          themis="${{ inputs.themis_image }}"
+          laminus="${{ inputs.laminus_image }}"
+          ordinus="${{ inputs.ordinus_image }}"
+
+          [ -z "$themis" ]  && themis="ghcr.io/mgomezdev/themis:develop"
+          [ -z "$laminus" ] && laminus="ghcr.io/mgomezdev/laminus:develop"
+          [ -z "$ordinus" ] && ordinus="ghcr.io/mgomezdev/gridfinity-customizer:develop"
+
+          echo "themis=$themis"   >> "$GITHUB_OUTPUT"
+          echo "laminus=$laminus" >> "$GITHUB_OUTPUT"
+          echo "ordinus=$ordinus" >> "$GITHUB_OUTPUT"
+          echo "Resolved: themis=$themis laminus=$laminus ordinus=$ordinus"
+
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download image built by the caller
+        if: ${{ inputs.image_artifact != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.image_artifact }}
+          path: /tmp/ci-image
+
+      - name: Load image built by the caller
+        if: ${{ inputs.image_artifact != '' }}
+        run: |
+          for tar in /tmp/ci-image/*.tar; do
+            echo "loading $tar"
+            docker load --input "$tar"
+          done
+          docker image ls
+
+      - name: Configure env
+        run: cp .env.example .env
+
+      - name: Read ORCA_VERSION for the AppImage cache key
+        run: echo "ORCA_VERSION=$(grep -oP '^ORCA_VERSION=\K.*' .env)" >> "$GITHUB_ENV"
+
+      # Named Docker volumes aren't directly cache-able; docker-compose.ci.yml
+      # bind-mounts the same path to a host dir this action can persist.
+      - name: Restore OrcaSlicer AppImage cache
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/orcaslicer
+          key: orcaslicer-${{ env.ORCA_VERSION }}
+
+      - name: Start the full stack
+        env:
+          THEMIS_IMAGE: ${{ steps.images.outputs.themis }}
+          LAMINUS_IMAGE: ${{ steps.images.outputs.laminus }}
+          ORDINUS_IMAGE: ${{ steps.images.outputs.ordinus }}
+        run: |
+          mkdir -p .ci-cache/orcaslicer
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --wait
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml ps
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install test dependencies
+        run: pip install -r requirements-test.txt
+
+      - name: Install Playwright browser
+        run: playwright install --with-deps chromium
+
+      # No marker exclusions: this is the one gate that actually proves the
+      # slicing pipeline and the Ordinus edge together, against real OrcaSlicer.
+      - name: Run full e2e suite
+        run: pytest tests/e2e/ --integration -m integration -v
+
+      - name: Dump service logs
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v
