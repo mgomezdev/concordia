@@ -29,11 +29,28 @@ services:
       - PYTHONUNBUFFERED=1
       - ORCA_VERSION=${ORCA_VERSION:-2.4.2}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
-      interval: 10s
+      # A bare `curl -f /api/health` always returns 200 once uvicorn binds --
+      # by design, /api/health reports catalog readiness as the `catalog_loaded`
+      # field, not the HTTP status, so callers can poll it (see laminus's own
+      # CONTRIBUTING.md). A depends_on: service_healthy gate needs the field,
+      # not the status: with the bare curl, Themis (and then Ordinus) started
+      # the instant uvicorn was up, while /api/profiles kept 503ing for minutes
+      # -- every request in that window failed for a reason curl -f could
+      # never see.
+      test: [
+        "CMD", "python3", "-c",
+        "import json,sys,urllib.request as u; d=json.load(u.urlopen('http://localhost:5000/api/health',timeout=3)); sys.exit(0 if d.get('catalog_loaded') else 1)"
+      ]
+      interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 60s
+      retries: 10
+      # Measured on the full real OrcaSlicer vendor bundle (1500+ machine,
+      # 3200+ process, 6400+ filament profiles): a cold AppImage download and
+      # extract took ~130s, and the catalog scan another ~340s on top of that
+      # -- worst case near 8 minutes before catalog_loaded ever turns true.
+      # Warm starts (AppImage cached, but the catalog itself is not persisted)
+      # still pay the ~340s scan. start_period + interval*retries covers both.
+      start_period: 600s
     restart: unless-stopped
 
   themis:

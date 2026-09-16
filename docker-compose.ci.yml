@@ -1,0 +1,28 @@
+# CI-only override for the real-OrcaSlicer e2e run (the `full` profile).
+#
+# Bind-mounts the extracted OrcaSlicer AppImage to a host path instead of the
+# named `laminus-slicer` volume, so GitHub's actions/cache can save/restore it
+# across runs -- named Docker volumes aren't cache-able directly; a host
+# directory is. Everything else -- laminus-config, laminus-data -- is left as
+# the named volumes from docker-compose.yml.
+#
+# Usage:
+#   mkdir -p .ci-cache/orcaslicer
+#   docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --wait
+
+services:
+  laminus:
+    volumes:
+      - ./.ci-cache/orcaslicer:/opt/orcaslicer
+    # Production intentionally never exposes Laminus to the host (internal-only,
+    # reached only by Themis). But tests/e2e/helpers.py's LAMINUS_URL defaults
+    # to http://localhost:5100 -- the port docker-compose.test.yml's mock
+    # publishes -- and pytest runs from the HOST, not inside the network. Against
+    # the real stack with no override, seed_test_data's _fetch_known_profile call
+    # hit a closed port, its surrounding try/except swallowed the failure, and
+    # every seeded printer silently got no profile at all: print_profiles and
+    # filament_profiles came back empty and all 4 slicing tests failed with no
+    # slice ever attempted. Matches docker-compose.test.yml's own port for the
+    # same reason: it's what LAMINUS_URL already defaults to.
+    ports:
+      - "5100:5000"

@@ -4,3 +4,5 @@ __pycache__/
 .env
 .env.local
 .claude/
+# The e2e-full CI job's OrcaSlicer AppImage cache (docker-compose.ci.yml).
+.ci-cache/
