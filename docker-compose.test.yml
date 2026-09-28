@@ -75,10 +75,15 @@ services:
       - LAMINUS_SIDECAR_URL=http://mock-laminus:5000
       - SPOOLMAN_URL=http://mock-spoolman:7912
       - THEMIS_LIBRARY_DIR=/data/library
-      # Matches the key tests/e2e/helpers.py sends as X-Api-Key. Without it the
-      # suite depended on Themis's bootstrap window staying open, which
-      # test_ui.py's first page load closes partway through the run.
+      # Matches the key tests/e2e/helpers.py sends as X-Api-Key. Themis has no
+      # open "bootstrap window" any more: every call needs a key, a login session,
+      # or to come from THEMIS_LOCAL_NETWORKS.
       - THEMIS_BOOTSTRAP_KEY=${THEMIS_BOOTSTRAP_KEY:-dev-e2e-bootstrap-key}
+      # Ordinus calls Themis container-to-container without a key; in this test
+      # stack Docker's own networks count as the local network (keyless admin).
+      # Test-only: on a real host a published port can surface every client as
+      # the Docker gateway, which this range would then make admin.
+      - THEMIS_LOCAL_NETWORKS=172.16.0.0/12,192.168.0.0/16
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 10s

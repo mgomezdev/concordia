@@ -36,6 +36,7 @@ from helpers import (
     THEMIS_URL,
     _drain_active_jobs_for_printer,
     _find_centauri_placeholder_id,
+    authed_session,
 )
 
 # Every test here needs the Ordinus container, which only the `push` compose
@@ -124,7 +125,7 @@ def _send_to_themis(session: requests.Session, layout_id: int) -> int:
 
 
 def _themis_project(project_id: int) -> dict[str, Any]:
-    resp = requests.get(f"{THEMIS_URL}/api/v1/projects/{project_id}", timeout=10)
+    resp = authed_session().get(f"{THEMIS_URL}/api/v1/projects/{project_id}", timeout=10)
     resp.raise_for_status()
     return resp.json()
 
@@ -148,7 +149,7 @@ def ordinus(request: pytest.FixtureRequest) -> requests.Session:
 
 @pytest.fixture(scope="module")
 def themis(request: pytest.FixtureRequest) -> requests.Session:
-    s = requests.Session()
+    s = authed_session()
     try:
         s.get(f"{THEMIS_URL}/api/v1/health", timeout=5).raise_for_status()
     except Exception as exc:
