@@ -21,11 +21,9 @@ MACHINE_PROFILE  = "Elegoo Centauri Carbon 0.4 nozzle"
 PROCESS_PROFILE  = "0.16mm Optimal @Elegoo CC 0.4 nozzle"
 FILAMENT_PROFILE = "Elegoo PLA @ECC"
 
-# Themis gates every /api/v1 route behind an API key once api_keys is non-empty
-# (the "bootstrap window" only stays open while the table is empty — the first
-# browser page load in test_ui.py mints a key and closes it for the rest of the
-# run, and for any future run against the same volume). THEMIS_BOOTSTRAP_KEY is
-# Themis's break-glass full-scope key — set it in the same .env used by
+# Themis gates every /api/v1 route behind an API key (or a login session, or a
+# THEMIS_LOCAL_NETWORKS peer); there is no open bootstrap window. THEMIS_BOOTSTRAP_KEY
+# is Themis's break-glass full-scope key — set it in the same .env used by
 # docker-compose.yml so the stack and the tests share one value.
 THEMIS_API_KEY = os.environ.get("THEMIS_BOOTSTRAP_KEY", "")
 

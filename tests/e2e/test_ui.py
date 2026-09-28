@@ -132,9 +132,7 @@ def page_ready(page: Page, alive) -> Page:  # noqa: ARG001
     """Return a Playwright page pointed at the Themis UI.
 
     Seeds `themis.apiKey` into localStorage before any navigation so AuthGate
-    finds a valid key immediately instead of hitting the bootstrap POST (which
-    only succeeds once, on a fresh api_keys table) or falling to the manual
-    key-entry screen. Uses the same THEMIS_BOOTSTRAP_KEY break-glass key the
+    finds a valid key immediately instead of showing the sign-in screen. Uses the same THEMIS_BOOTSTRAP_KEY break-glass key the
     stack is started with — see helpers.authed_session.
     """
     page.set_default_timeout(NAV_TIMEOUT_MS)
