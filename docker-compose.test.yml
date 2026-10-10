@@ -75,6 +75,9 @@ services:
       - LAMINUS_SIDECAR_URL=http://mock-laminus:5000
       - SPOOLMAN_URL=http://mock-spoolman:7912
       - THEMIS_LIBRARY_DIR=/data/library
+      # Themis ships its mock printer plugin disabled; the suite drives a `printer_type: mock` printer,
+      # so enable it here (test stack only; never set in prod).
+      - THEMIS_MOCK_PRINTERS=1
       # Matches the key tests/e2e/helpers.py sends as X-Api-Key. Themis has no
       # open "bootstrap window" any more: every call needs a key, a login session,
       # or to come from THEMIS_LOCAL_NETWORKS.
