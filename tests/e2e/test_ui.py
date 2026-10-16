@@ -38,6 +38,7 @@ Requires:
 
 from __future__ import annotations
 
+import re
 import time
 import uuid as _uuid
 from typing import Generator
@@ -587,30 +588,25 @@ def test_project_create_via_ui(page_ready: Page, stl_file: int) -> None:
             # Fallback: click the first non-folder button in the file list area
             page.locator("button").filter(has_text=".stl").first.click()
 
-        # Click Generate (opens printer picker then confirms)
-        generate_btn = page.locator("button", has_text="Generate").first
-        if not generate_btn.is_visible(timeout=5_000):
-            pytest.skip("Generate button not visible — project may have no items")
-        generate_btn.click()
+        # "Create…" opens the printer picker; its confirm button reads "Create" (printers
+        # selected) or "Create without dispatch" (none). Jobs are generated in place and the
+        # builder stays on /projects/{id}/edit with an "added to queue" banner.
+        page.get_by_role("button", name="Create…", exact=True).click()
+        page.get_by_role("button", name=re.compile(r"^Create( without dispatch)?$")).click()
+        page.wait_for_selector("text=added to queue", timeout=30_000)
 
-        # Printer picker may appear; dismiss it by clicking Generate again or Skip.
-        gen_confirm = page.locator("button", has_text="Generate").last
-        if gen_confirm.is_visible(timeout=3_000):
-            gen_confirm.click()
+        # Capture project ID from URL (/projects/{id}/edit)
+        match = re.search(r"/projects/(\d+)", page.url)
+        if match:
+            project_id = int(match.group(1))
 
-        # ProjectBuilderScreen navigates to /projects/{id} after generate.
-        page.wait_for_url(f"{THEMIS_URL}/projects/*", timeout=30_000)
+        # "Details" opens the project detail screen, which lists the generated jobs.
+        page.get_by_role("button", name="Details", exact=True).click()
+        page.wait_for_url(f"{THEMIS_URL}/projects/{project_id}", timeout=15_000)
         page.wait_for_load_state("networkidle", timeout=10_000)
-
-        # Capture project ID from URL
-        url_parts = page.url.split("/")
-        try:
-            project_id = int(url_parts[-1])
-        except (ValueError, IndexError):
-            pass
-
-        # The detail screen shows the project name and job list.
-        page.wait_for_selector("text=Generate", timeout=15_000)
+        assert _session.get(_api(f"/projects/{project_id}/jobs"), timeout=10).json(), (
+            f"Project {project_id} has no generated jobs"
+        )
 
     finally:
         if project_id:

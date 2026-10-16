@@ -29,6 +29,7 @@ from typing import Any
 import pytest
 import requests
 from helpers import (
+    authed_session,
     FILAMENT_PROFILE,
     MACHINE_PROFILE,
     ORDINUS_URL,
@@ -124,7 +125,7 @@ def _send_to_themis(session: requests.Session, layout_id: int) -> int:
 
 
 def _themis_project(project_id: int) -> dict[str, Any]:
-    resp = requests.get(f"{THEMIS_URL}/api/v1/projects/{project_id}", timeout=10)
+    resp = authed_session().get(f"{THEMIS_URL}/api/v1/projects/{project_id}", timeout=10)
     resp.raise_for_status()
     return resp.json()
 
@@ -143,12 +144,28 @@ def ordinus(request: pytest.FixtureRequest) -> requests.Session:
         s.get(f"{ORDINUS_URL}/api/v1/health", timeout=5).raise_for_status()
     except Exception as exc:
         pytest.skip(f"Ordinus not reachable at {ORDINUS_URL}: {exc}")
+    # Ordinus has no env hook for its Themis key (BIZ-298): mint a scoped key with the
+    # bootstrap key and hand it over through Ordinus's settings API.
+    minted = authed_session().post(
+        f"{THEMIS_URL}/api/v1/api-keys",
+        json={
+            "name": "e2e-ordinus",
+            "scopes": ["files:read", "files:write", "projects:read", "projects:write"],
+        },
+        timeout=10,
+    )
+    minted.raise_for_status()
+    s.patch(
+        f"{ORDINUS_URL}/api/v1/settings",
+        json={"themis_api_key": minted.json()["key"]},
+        timeout=10,
+    ).raise_for_status()
     return s
 
 
 @pytest.fixture(scope="module")
 def themis(request: pytest.FixtureRequest) -> requests.Session:
-    s = requests.Session()
+    s = authed_session()
     try:
         s.get(f"{THEMIS_URL}/api/v1/health", timeout=5).raise_for_status()
     except Exception as exc:
