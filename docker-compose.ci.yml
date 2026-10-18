@@ -26,3 +26,14 @@ services:
     # same reason: it's what LAMINUS_URL already defaults to.
     ports:
       - "5100:5000"
+
+  themis:
+    environment:
+      # Themis no longer has an open "bootstrap window": every call needs a key,
+      # a login session, or to come from THEMIS_LOCAL_NETWORKS. Ordinus calls
+      # Themis container-to-container without a key, so in this CI stack Docker's
+      # own networks count as the local network (keyless admin). CI-only: on a
+      # real host a published port can surface every client as the Docker
+      # gateway, which this range would then make admin. Same as
+      # docker-compose.test.yml.
+      - THEMIS_LOCAL_NETWORKS=172.16.0.0/12,192.168.0.0/16

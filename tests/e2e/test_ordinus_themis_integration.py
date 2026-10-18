@@ -37,6 +37,7 @@ from helpers import (
     THEMIS_URL,
     _drain_active_jobs_for_printer,
     _find_centauri_placeholder_id,
+    authed_session,
 )
 
 # Every test here needs the Ordinus container, which only the `push` compose
