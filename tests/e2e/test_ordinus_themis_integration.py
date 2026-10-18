@@ -29,7 +29,6 @@ from typing import Any
 import pytest
 import requests
 from helpers import (
-    authed_session,
     FILAMENT_PROFILE,
     MACHINE_PROFILE,
     ORDINUS_URL,
