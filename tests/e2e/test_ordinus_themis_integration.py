@@ -144,6 +144,22 @@ def ordinus(request: pytest.FixtureRequest) -> requests.Session:
         s.get(f"{ORDINUS_URL}/api/v1/health", timeout=5).raise_for_status()
     except Exception as exc:
         pytest.skip(f"Ordinus not reachable at {ORDINUS_URL}: {exc}")
+    # Ordinus has no env hook for its Themis key (BIZ-298): mint a scoped key with the
+    # bootstrap key and hand it over through Ordinus's settings API.
+    minted = authed_session().post(
+        f"{THEMIS_URL}/api/v1/api-keys",
+        json={
+            "name": "e2e-ordinus",
+            "scopes": ["files:read", "files:write", "projects:read", "projects:write"],
+        },
+        timeout=10,
+    )
+    minted.raise_for_status()
+    s.patch(
+        f"{ORDINUS_URL}/api/v1/settings",
+        json={"themis_api_key": minted.json()["key"]},
+        timeout=10,
+    ).raise_for_status()
     return s
 
 

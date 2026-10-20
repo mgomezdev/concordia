@@ -4,6 +4,10 @@ Concordia (this repo, `concordia` on disk) is the orchestration layer for the fu
 
 > **About this project.** This suite (Concordia, Themis, Laminus, Ordinus) is being built as an exercise in full agent-driven coding under human oversight — the goal is both a genuinely useful tool and a practical, working example of emerging techniques in prompt design, multi-agent workflows, and harnessing.
 
+> 📖 **Setting the stack up, or just using it?** See the [user wiki](docs/wiki/Home.md) — install
+> walkthrough, screen-by-screen guides, integrations, and troubleshooting. This file is the
+> contributor reference; the wiki is the user-facing one.
+
 ---
 
 ## What's in This Repo
