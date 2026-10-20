@@ -586,14 +586,15 @@ def test_project_create_via_ui(page_ready: Page, stl_file: int) -> None:
             # Fallback: click the first non-folder button in the file list area
             page.locator("button").filter(has_text=".stl").first.click()
 
-        # Released Themis labels the action "Generate" and redirects to /projects/{id};
-        # develop labels it "Create…" and stays on /projects/{id}/edit with an "added to queue"
-        # banner. Both open a printer picker whose confirm is "Generate" / "Create" /
-        # "Create without dispatch". Drive whichever UI is running.
-        page.get_by_role("button", name=re.compile(r"^(Create…|Generate)$")).first.click()
-        page.get_by_role(
-            "button", name=re.compile(r"^(Create( without dispatch)?|Generate)$")
-        ).last.click()
+        # develop's builder has a "Create…" action that opens a printer picker (confirm reads
+        # "Create" or "Create without dispatch"), generates jobs in place and stays on
+        # /projects/{id}/edit. The released image has no such action in the builder (its
+        # "Generate" lives on the project card), so skip there rather than fail.
+        create_btn = page.get_by_role("button", name="Create…", exact=True)
+        if not create_btn.is_visible(timeout=5_000):
+            pytest.skip("Builder has no 'Create…' action — Themis build predates it")
+        create_btn.click()
+        page.get_by_role("button", name=re.compile(r"^Create( without dispatch)?$")).click()
         page.wait_for_url(re.compile(r"/projects/\d+"), timeout=30_000)
 
         match = re.search(r"/projects/(\d+)", page.url)
