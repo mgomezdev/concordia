@@ -29,17 +29,17 @@ services:
       - PYTHONUNBUFFERED=1
       - ORCA_VERSION=${ORCA_VERSION:-2.4.2}
     healthcheck:
-      # A bare `curl -f /api/health` always returns 200 once uvicorn binds --
-      # by design, /api/health reports catalog readiness as the `catalog_loaded`
+      # A bare `curl -f /api/v1/health` always returns 200 once uvicorn binds --
+      # by design, /api/v1/health reports catalog readiness as the `catalog_loaded`
       # field, not the HTTP status, so callers can poll it (see laminus's own
       # CONTRIBUTING.md). A depends_on: service_healthy gate needs the field,
       # not the status: with the bare curl, Themis (and then Ordinus) started
-      # the instant uvicorn was up, while /api/profiles kept 503ing for minutes
+      # the instant uvicorn was up, while /api/v1/profiles kept 503ing for minutes
       # -- every request in that window failed for a reason curl -f could
       # never see.
       test: [
         "CMD", "python3", "-c",
-        "import json,sys,urllib.request as u; d=json.load(u.urlopen('http://localhost:5000/api/health',timeout=3)); sys.exit(0 if d.get('catalog_loaded') else 1)"
+        "import json,sys,urllib.request as u; d=json.load(u.urlopen('http://localhost:5000/api/v1/health',timeout=3)); sys.exit(0 if d.get('catalog_loaded') else 1)"
       ]
       interval: 15s
       timeout: 5s

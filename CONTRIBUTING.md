@@ -50,7 +50,7 @@ Three services, all managed by Docker Compose:
 ### Dependency chain
 
 ```
-laminus (healthcheck: GET /api/health)
+laminus (healthcheck: GET /api/v1/health)
   └─ themis (depends_on: laminus healthy) (healthcheck: GET /api/v1/health)
        └─ ordinus (depends_on: themis healthy)
 ```

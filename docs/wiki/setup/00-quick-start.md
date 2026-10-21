@@ -74,7 +74,7 @@ Laminus has no host port. Check it through the container:
 
 ```bash
 docker compose exec laminus python3 -c \
-  "import json,urllib.request as u; print(json.load(u.urlopen('http://localhost:5000/api/health'))['catalog_loaded'])"
+  "import json,urllib.request as u; print(json.load(u.urlopen('http://localhost:5000/api/v1/health'))['catalog_loaded'])"
 # True
 ```
 

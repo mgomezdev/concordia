@@ -21,7 +21,7 @@ How the four pieces fit together.
 ## Startup order
 
 ```
-laminus   (healthcheck: /api/health → catalog_loaded == true)
+laminus   (healthcheck: /api/v1/health → catalog_loaded == true)
    └─ themis    (depends_on: laminus healthy; healthcheck: /api/v1/health)
         └─ ordinus   (depends_on: themis healthy; healthcheck: /api/v1/health)
 ```
@@ -29,14 +29,14 @@ laminus   (healthcheck: /api/health → catalog_loaded == true)
 Each waits for the one above to be **healthy**, not merely started.
 
 **Why the gate is strict.** Laminus binds its HTTP port long before its profile catalog is
-usable. A plain `curl -f /api/health` returns 200 immediately — so Themis would start while
-`/api/profiles` still 503'd for minutes, and every request in that window failed invisibly.
+usable. A plain `curl -f /api/v1/health` returns 200 immediately — so Themis would start while
+`/api/v1/profiles` still 503'd for minutes, and every request in that window failed invisibly.
 The healthcheck therefore parses the response and tests the `catalog_loaded` **field**, not
 the status code:
 
 ```yaml
 test: ["CMD", "python3", "-c",
-  "import json,sys,urllib.request as u; d=json.load(u.urlopen('http://localhost:5000/api/health',timeout=3)); sys.exit(0 if d.get('catalog_loaded') else 1)"]
+  "import json,sys,urllib.request as u; d=json.load(u.urlopen('http://localhost:5000/api/v1/health',timeout=3)); sys.exit(0 if d.get('catalog_loaded') else 1)"]
 start_period: 600s
 ```
 

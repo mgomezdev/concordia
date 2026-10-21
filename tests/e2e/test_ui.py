@@ -450,8 +450,8 @@ def test_verify_slice_via_queue_ui(page_ready: Page, stl_file: int) -> None:
     This is the full OrcaSlicer invocation path — expect 30–90 s.
 
     API exercised: POST /api/v1/jobs/{id}/verify-slice, GET /api/v1/jobs/{id}/details,
-                   Laminus POST /api/slice/start, GET /api/slice/status/{id},
-                   GET /api/slice/download/{id}
+                   Laminus POST /api/v1/jobs, GET /api/v1/jobs/{id},
+                   GET /api/v1/jobs/{id}/artifact
     """
     page = page_ready
     page.set_default_timeout(SLICE_TIMEOUT_MS)
@@ -556,7 +556,7 @@ def test_project_create_via_ui(page_ready: Page, stl_file: int) -> None:
 
     API exercised: POST /api/v1/projects, POST /api/v1/projects/{id}/items,
                    POST /api/v1/projects/{id}/generate, GET /api/v1/projects/{id}/jobs,
-                   Laminus POST /api/pack (via generate)
+                   Laminus POST /api/v1/pack (via generate)
     """
     page = page_ready
     project_name = _uniq("E2E Project")
