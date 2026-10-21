@@ -10,7 +10,7 @@
 # Run tests against it:
 #   LAMINUS_URL=http://localhost:5100 pytest tests/e2e/ --integration
 #
-# Mock Laminus is exposed on port 5100 so tests can call /api/test/known-profile
+# Mock Laminus is exposed on port 5100 so tests can read the Laminus /api/v1/profiles catalog
 # directly to discover the stable profile UUIDs needed to register a mock printer.
 #
 # Ordinus is included so the ordinus-themis integration tests can run:
