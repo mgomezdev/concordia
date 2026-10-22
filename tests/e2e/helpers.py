@@ -9,7 +9,7 @@ import requests
 _themis_port = os.environ.get("HOST_PORT", "8001")
 THEMIS_URL = os.environ.get("THEMIS_URL", f"http://localhost:{_themis_port}")
 
-# Direct URL for Laminus/mock-laminus — used to call /api/test/known-profile.
+# Direct URL for Laminus/mock-laminus — used to read /api/v1/profiles.
 # In docker-compose.test.yml mock-laminus is exposed on 5100; real Laminus is internal.
 LAMINUS_URL = os.environ.get("LAMINUS_URL", "http://localhost:5100")
 
@@ -83,22 +83,70 @@ def _drain_active_jobs_for_printer(session: requests.Session, printer_id: int) -
                 session.post(f"{THEMIS_URL}/api/v1/jobs/{job['id']}/cancel", timeout=10)
 
 
-def _fetch_known_profile(laminus_url: str = LAMINUS_URL, machine_name: str | None = None) -> dict:
-    """Call /api/test/known-profile on Laminus (or mock-laminus) and return the UUID triple.
+def _iter_v1_profiles(laminus_url: str, profile_type: str):
+    """Yield every Laminus v1 catalog entry of `profile_type`, following cursors.
 
-    Without `machine_name`: whatever machine the catalog returns first — fine for
-    a generic mock printer that doesn't care which hardware it gets.
-    With `machine_name`: the triple for that exact machine (e.g. MACHINE_PROFILE),
-    for seeding a printer whose fixtures assume a specific model's profiles.
+    GET /api/v1/profiles is cursor-paginated: {data: [...], page: {limit, next_cursor}}.
+    Raises requests.HTTPError (v1 error envelope) while the catalog is not ready.
+    """
+    cursor = None
+    while True:
+        params = {"type": profile_type, "limit": 200}
+        if cursor:
+            params["cursor"] = cursor
+        resp = requests.get(f"{laminus_url}/api/v1/profiles", params=params, timeout=10)
+        resp.raise_for_status()
+        body = resp.json()
+        yield from body["data"]
+        cursor = body["page"]["next_cursor"]
+        if not cursor:
+            return
+
+
+def _fetch_known_profile(laminus_url: str = LAMINUS_URL, machine_name: str | None = None) -> dict:
+    """Return a machine/process/filament UUID triple from the Laminus v1 catalog.
+
+    Built from GET /api/v1/profiles only (the old /api/test/known-profile helper
+    was versionless).
+    Without `machine_name`: the first machine in the catalog — fine for a generic
+    mock printer that doesn't care which hardware it gets.
+    With `machine_name`: that exact machine (e.g. MACHINE_PROFILE), for seeding a
+    printer whose fixtures assume a specific model's profiles.
+    Process/filament: the first entry compatible with the machine.
 
     Returns: {machine_uuid, machine_name, process_uuid, process_name, filament_uuid, filament_name}
-    Raises requests.HTTPError if Laminus is unreachable, catalog not ready, or
-    (with machine_name) no matching machine is in the catalog.
+    Raises requests.HTTPError if Laminus is unreachable or the catalog is not ready,
+    LookupError if the catalog has no matching machine/process/filament.
     """
-    params = {"machine_name": machine_name} if machine_name is not None else None
-    resp = requests.get(f"{laminus_url}/api/test/known-profile", params=params, timeout=10)
-    resp.raise_for_status()
-    return resp.json()
+    machines = _iter_v1_profiles(laminus_url, "machine")
+    if machine_name is None:
+        machine = next(machines, None)
+    else:
+        machine = next((m for m in machines if m["name"] == machine_name), None)
+    if machine is None:
+        raise LookupError(f"Machine {machine_name!r} not in Laminus catalog")
+
+    def _first_compatible(profile_type: str) -> dict:
+        fallback = None
+        for entry in _iter_v1_profiles(laminus_url, profile_type):
+            fallback = fallback or entry
+            cp = entry.get("compatible_printers") or []
+            if not cp or machine["name"] in cp:
+                return entry
+        if fallback is None:
+            raise LookupError(f"No {profile_type} profiles in Laminus catalog")
+        return fallback
+
+    process = _first_compatible("process")
+    filament = _first_compatible("filament")
+    return {
+        "machine_uuid": machine["uuid"],
+        "machine_name": machine["name"],
+        "process_uuid": process["uuid"],
+        "process_name": process["name"],
+        "filament_uuid": filament["uuid"],
+        "filament_name": filament["name"],
+    }
 
 
 def _find_mock_printer_id(session: requests.Session) -> int | None:
@@ -114,7 +162,7 @@ def _find_mock_printer_id(session: requests.Session) -> int | None:
 def _find_or_create_mock_printer(session: requests.Session, name: str = "Mock Printer (E2E)") -> int:
     """Return the ID of the E2E mock printer, creating it if needed.
 
-    Uses /api/test/known-profile on LAMINUS_URL to seed the printer's active preset
+    Uses the Laminus v1 profile catalog at LAMINUS_URL to seed the printer's active preset
     with stable profile UUIDs from the running Laminus (or mock-laminus).
     """
     existing = _find_mock_printer_id(session)

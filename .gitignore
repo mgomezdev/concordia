@@ -6,3 +6,6 @@ __pycache__/
 .claude/
 # The e2e-full CI job's OrcaSlicer AppImage cache (docker-compose.ci.yml).
 .ci-cache/
+
+# Internal business planning docs - not engineering documentation, keep local.
+docs/business/

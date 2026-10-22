@@ -10,8 +10,8 @@ from helpers import MACHINE_PROFILE
 # Each dict maps to PrinterCreate fields.
 # Keys prefixed with "_" are seed-time directives, not sent to the API:
 #   _inject_laminus_profiles: bool — fill orca_printer_profiles + current_orca_printer_profile
-#                                     from Laminus /api/test/known-profile at seed time
-#   _known_machine_name: str | None — passed as machine_name to /api/test/known-profile,
+#                                     from Laminus the Laminus /api/v1/profiles catalog at seed time
+#   _known_machine_name: str | None — passed as machine_name to the Laminus /api/v1/profiles catalog,
 #                                      so the printer gets that specific machine's profiles
 #                                      instead of whichever one the catalog returns first
 #                                      (matters against the real Laminus, which serves a full
