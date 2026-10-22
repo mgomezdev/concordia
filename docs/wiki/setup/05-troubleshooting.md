@@ -191,7 +191,7 @@ docker compose ps
 docker compose logs --tail=100 laminus
 docker compose logs --tail=100 themis
 docker compose exec laminus python3 -c \
-  "import json,urllib.request as u; print(json.load(u.urlopen('http://localhost:5000/api/health')))"
+  "import json,urllib.request as u; print(json.load(u.urlopen('http://localhost:5000/api/v1/health')))"
 ```
 
 Include your `.env` **with `THEMIS_BOOTSTRAP_KEY` redacted**.

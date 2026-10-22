@@ -58,7 +58,7 @@ It has no host port, so go through the container:
 
 ```bash
 docker compose exec laminus python3 -c \
-  "import json,urllib.request as u; print(json.dumps(json.load(u.urlopen('http://localhost:5000/api/health')),indent=2))"
+  "import json,urllib.request as u; print(json.dumps(json.load(u.urlopen('http://localhost:5000/api/v1/health')),indent=2))"
 ```
 
 ✅ **Pass:** `catalog_loaded` is `true` and `catalog_profile_count` shows real numbers:
