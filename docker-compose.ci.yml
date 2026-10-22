@@ -37,3 +37,7 @@ services:
       # gateway, which this range would then make admin. Same as
       # docker-compose.test.yml.
       - THEMIS_LOCAL_NETWORKS=172.16.0.0/12,192.168.0.0/16
+      # The seeded placeholder printers are type `mock`; Themis ships that plugin
+      # disabled, so POST /printers 422s ("Plugin 'mock' is disabled") without this.
+      # Same as docker-compose.test.yml.
+      - THEMIS_MOCK_PRINTERS=1
