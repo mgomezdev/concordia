@@ -17,6 +17,10 @@ LAMINUS_URL = os.environ.get("LAMINUS_URL", "http://localhost:5100")
 _ordinus_port = os.environ.get("ORDINUS_PORT", "3002")
 ORDINUS_URL = os.environ.get("ORDINUS_URL", f"http://localhost:{_ordinus_port}")
 
+# Laminus as Ordinus reaches it container-to-container: Ordinus builds a layout's
+# 3MF via Laminus /api/v1/pack during BOM generation. mock-laminus in docker-compose.test.yml.
+ORDINUS_LAMINUS_URL = os.environ.get("ORDINUS_LAMINUS_URL", "http://mock-laminus:5000")
+
 MACHINE_PROFILE  = "Elegoo Centauri Carbon 0.4 nozzle"
 PROCESS_PROFILE  = "0.16mm Optimal @Elegoo CC 0.4 nozzle"
 FILAMENT_PROFILE = "Elegoo PLA @ECC"
