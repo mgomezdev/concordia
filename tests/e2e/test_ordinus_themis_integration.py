@@ -32,6 +32,7 @@ from helpers import (
     FILAMENT_PROFILE,
     MACHINE_PROFILE,
     ORDINUS_LAMINUS_URL,
+    ORDINUS_THEMIS_URL,
     ORDINUS_URL,
     PROCESS_PROFILE,
     THEMIS_URL,
@@ -145,9 +146,9 @@ def ordinus(request: pytest.FixtureRequest) -> requests.Session:
         s.get(f"{ORDINUS_URL}/api/v1/health", timeout=5).raise_for_status()
     except Exception as exc:
         pytest.skip(f"Ordinus not reachable at {ORDINUS_URL}: {exc}")
-    # Ordinus has no env hook for its Themis key (BIZ-298): mint a scoped key with the
-    # bootstrap key and hand it over through Ordinus's settings API, along with the
-    # Laminus URL BOM generation packs its 3MF through.
+    # Ordinus takes its Themis and Laminus URLs and its Themis key only from its
+    # settings API (no env hooks; BIZ-298): mint a scoped key with the bootstrap key
+    # and hand all three over. Laminus is what BOM generation packs its 3MF through.
     minted = authed_session().post(
         f"{THEMIS_URL}/api/v1/api-keys",
         json={
@@ -159,7 +160,11 @@ def ordinus(request: pytest.FixtureRequest) -> requests.Session:
     minted.raise_for_status()
     s.patch(
         f"{ORDINUS_URL}/api/v1/settings",
-        json={"themis_api_key": minted.json()["key"], "laminus_url": ORDINUS_LAMINUS_URL},
+        json={
+            "themis_url": ORDINUS_THEMIS_URL,
+            "themis_api_key": minted.json()["key"],
+            "laminus_url": ORDINUS_LAMINUS_URL,
+        },
         timeout=10,
     ).raise_for_status()
     return s
