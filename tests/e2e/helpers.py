@@ -17,6 +17,10 @@ LAMINUS_URL = os.environ.get("LAMINUS_URL", "http://localhost:5100")
 _ordinus_port = os.environ.get("ORDINUS_PORT", "3002")
 ORDINUS_URL = os.environ.get("ORDINUS_URL", f"http://localhost:{_ordinus_port}")
 
+# Themis as Ordinus reaches it container-to-container. Ordinus reads it only from
+# its settings (no env var), so the ordinus fixture PATCHes it in.
+ORDINUS_THEMIS_URL = os.environ.get("ORDINUS_THEMIS_URL", "http://themis:8000")
+
 # Laminus as Ordinus reaches it container-to-container: Ordinus builds a layout's
 # 3MF via Laminus /api/v1/pack during BOM generation. mock-laminus in docker-compose.test.yml.
 ORDINUS_LAMINUS_URL = os.environ.get("ORDINUS_LAMINUS_URL", "http://mock-laminus:5000")
