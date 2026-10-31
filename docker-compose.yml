@@ -23,6 +23,8 @@ services:
       # Named volume caches the OrcaSlicer AppImage across restarts.
       # Re-downloaded only when ORCA_VERSION changes. Not worth backing up.
       - laminus-slicer:/opt/orcaslicer
+    ports:
+      - "${LAMINUS_PORT:-5000}:5000"
     shm_size: "1gb"
     environment:
       - TZ=Etc/UTC
@@ -56,11 +58,18 @@ services:
   themis:
     image: ${THEMIS_IMAGE:-ninjabuffalo/themis:latest}
     ports:
-      - "${HOST_PORT:-8000}:8000"
+      # THEMIS_BIND_IP narrows which host address publishes the port (default: all). Docker NATs
+      # published-port traffic, so Themis sees every client as the bridge gateway, not its real IP --
+      # trusting that gateway in THEMIS_LOCAL_NETWORKS is only safe while the port is bound to an
+      # interface you trust (e.g. your Tailscale IP).
+      - "${THEMIS_BIND_IP:-0.0.0.0}:${HOST_PORT:-8000}:8000"
     volumes:
       - themis-data:/data
     environment:
       - LAMINUS_SIDECAR_URL=http://laminus:5000
+      # Clients in these CIDRs are admin without signing in (Themis docs/agent/conventions.md, auth).
+      # Default matches Themis's own default.
+      - THEMIS_LOCAL_NETWORKS=${THEMIS_LOCAL_NETWORKS:-192.168.0.0/16}
       - THEMIS_LIBRARY_DIR=/data/library
       - THEMIS_BOOTSTRAP_KEY=${THEMIS_BOOTSTRAP_KEY:-}
     healthcheck:
