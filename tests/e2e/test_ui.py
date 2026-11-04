@@ -342,9 +342,19 @@ def test_queue_new_job_from_library(page_ready: Page, stl_file: int) -> None:
     page.wait_for_selector("text=Plate 1", timeout=8_000)
 
     # Select the placeholder printer.
-    centauri_btn = page.locator("text=Elegoo Centauri Carbon").first
-    if centauri_btn.is_visible(timeout=5_000):
-        centauri_btn.click()
+    # Themis >= BIZ-357: "+ Printer" opens a menu of menuitems; older builds show tiles.
+    printer_name = next(
+        p["name"] for p in _session.get(_api("/printers"), timeout=10).json()
+        if p["id"] == printer_id
+    )
+    plus = page.get_by_role("button", name="+ Printer")
+    if plus.count():
+        plus.first.click()
+        page.get_by_role("menuitem", name=re.compile(rf"^{re.escape(printer_name)}")).first.click()
+    else:
+        centauri_btn = page.locator("text=Elegoo Centauri Carbon").first
+        if centauri_btn.is_visible(timeout=5_000):
+            centauri_btn.click()
 
     # After selecting a printer, PerPrinterConfig fetches profiles asynchronously.
     # Wait for the select to appear, then wait for options to populate before selecting.
@@ -352,13 +362,14 @@ def test_queue_new_job_from_library(page_ready: Page, stl_file: int) -> None:
     if profile_select.is_visible(timeout=6_000):
         try:
             page.wait_for_function(
-                "() => (document.querySelector('[data-testid=\"print-profile-select\"]')?.options?.length ?? 0) > 1",
+                "(name) => [...(document.querySelector('[data-testid=\"print-profile-select\"]')?.options ?? [])].some(o => o.text.includes(name))",
+                arg=PROCESS_PROFILE,
                 timeout=8_000,
             )
             profile_select.select_option(PROCESS_PROFILE)
         except Exception:
             try:
-                profile_select.select_option(index=1)
+                profile_select.select_option(index=2)  # 0=placeholder, 1=Printer default
             except Exception:
                 pass
 
