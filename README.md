@@ -71,6 +71,23 @@ Rebuild a single service after code changes:
 docker compose -f docker-compose.yml -f docker-compose.local.yml up --build themis
 ```
 
+To test the current Themis and Laminus `develop` branches together, check both
+out as siblings, then use the dedicated source-build overlay:
+
+```bash
+git -C ../themis switch develop
+git -C ../laminus switch develop
+cp .env.example .env
+mkdir -p .ci-cache/orcaslicer
+docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.develop.yml \
+  up -d --build --wait laminus themis
+DEVELOP_STACK=1 LAMINUS_URL=http://localhost:5100 \
+  pytest tests/e2e/ --integration -m 'integration and not ordinus' -v
+```
+
+The scheduled `e2e (Themis + Laminus develop)` workflow performs the same run
+from fresh branch checkouts and records the three tested commit SHAs.
+
 ## Configuration
 
 Copy `.env.example` to `.env` and adjust as needed:
@@ -115,3 +132,22 @@ back up that tree.
 - [User wiki](docs/wiki/Home.md) — full install walkthrough and screen-by-screen guide
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — contributor reference: repo layout, E2E test suite, adding a new service
 - [`docs/slicing-flow.md`](docs/slicing-flow.md) — sequence diagrams for the slicing pipeline
+
+### Ordinus integration-test authentication
+
+Before starting the `push` test profile, create a private test password file:
+
+```sh
+umask 077
+python3 -c "import secrets; from pathlib import Path; Path('.ordinus-admin-password').write_text(secrets.token_urlsafe(32))"
+docker compose -f docker-compose.test.yml --profile push up -d --wait
+pytest tests/e2e/ --integration -m 'integration and ordinus' -v
+```
+
+The disposable container reads this mounted file at startup to provision its
+admin. The test client signs in and retains the cookie, sending the required
+non-browser request header. Both CI workflows create a fresh random password;
+HTTP cookies are enabled only in the test compose configuration. For an already
+provisioned test deployment, set `ORDINUS_E2E_ADMIN_PASSWORD` to its password.
+Do not point integration tests at a production deployment. Legacy published
+images without auth routes remain supported; failed logins are never bypassed.

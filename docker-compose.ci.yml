@@ -41,3 +41,10 @@ services:
       # disabled, so POST /printers 422s ("Plugin 'mock' is disabled") without this.
       # Same as docker-compose.test.yml.
       - THEMIS_MOCK_PRINTERS=1
+
+  ordinus:
+    environment:
+      - AUTH_COOKIE_SECURE=false
+      - ADMIN_SETUP_PASSWORD_FILE=/run/secrets/ordinus-admin-password
+    volumes:
+      - ./.ordinus-admin-password:/run/secrets/ordinus-admin-password:ro

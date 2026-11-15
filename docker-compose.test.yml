@@ -116,6 +116,10 @@ services:
       - USER_STL_IMAGE_DIR=/tmp/ordinus/user-stl-images
       - CORS_ORIGIN=*
       - PUBLIC_URL=http://localhost:3002
+      - AUTH_COOKIE_SECURE=false
+      - ADMIN_SETUP_PASSWORD_FILE=/run/secrets/ordinus-admin-password
+    volumes:
+      - ./.ordinus-admin-password:/run/secrets/ordinus-admin-password:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost/api/v1/health"]
       interval: 10s
