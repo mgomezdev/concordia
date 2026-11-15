@@ -14,7 +14,7 @@ Verifies:
 Requirements:
   - Ordinus running at ORDINUS_URL (default http://localhost:3001)
   - Themis  running at THEMIS_URL  (default http://localhost:8001)
-  - No authentication required (customer-profiles branch removes user auth)
+  - Admin provisioned with the CI password file (or ORDINUS_E2E_ADMIN_PASSWORD)
 
 Run:
     pytest tests/e2e/test_ordinus_themis_integration.py --integration
@@ -39,6 +39,7 @@ from helpers import (
     _drain_active_jobs_for_printer,
     _find_centauri_placeholder_id,
     authed_session,
+    ordinus_session,
 )
 
 # Every test here needs the Ordinus container, which only the `push` compose
@@ -141,7 +142,8 @@ def _themis_project_file_ids(project_id: int) -> list[int]:
 
 @pytest.fixture(scope="module")
 def ordinus(request: pytest.FixtureRequest) -> requests.Session:
-    s = requests.Session()
+    s = ordinus_session()
+    request.addfinalizer(s.close)
     try:
         s.get(f"{ORDINUS_URL}/api/v1/health", timeout=5).raise_for_status()
     except Exception as exc:
