@@ -71,6 +71,23 @@ Rebuild a single service after code changes:
 docker compose -f docker-compose.yml -f docker-compose.local.yml up --build themis
 ```
 
+To test the current Themis and Laminus `develop` branches together, check both
+out as siblings, then use the dedicated source-build overlay:
+
+```bash
+git -C ../themis switch develop
+git -C ../laminus switch develop
+cp .env.example .env
+mkdir -p .ci-cache/orcaslicer
+docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.develop.yml \
+  up -d --build --wait laminus themis
+DEVELOP_STACK=1 LAMINUS_URL=http://localhost:5100 \
+  pytest tests/e2e/ --integration -m 'integration and not ordinus' -v
+```
+
+The scheduled `e2e (Themis + Laminus develop)` workflow performs the same run
+from fresh branch checkouts and records the three tested commit SHAs.
+
 ## Configuration
 
 Copy `.env.example` to `.env` and adjust as needed:
