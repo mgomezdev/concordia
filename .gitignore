@@ -9,3 +9,5 @@ __pycache__/
 
 # Internal business planning docs - not engineering documentation, keep local.
 docs/business/
+
+.ordinus-admin-password

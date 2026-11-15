@@ -118,7 +118,10 @@ jobs:
           docker image ls
 
       - name: Configure env
-        run: cp .env.example .env
+        run: |
+          cp .env.example .env
+          umask 077
+          python3 -c "import secrets; from pathlib import Path; Path('.ordinus-admin-password').write_text(secrets.token_urlsafe(32))"
 
       - name: Start the ${{ inputs.profile }} stack
         env:
