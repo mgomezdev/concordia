@@ -60,6 +60,33 @@ def seed_test_data(request) -> None:
             ).raise_for_status()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def group_strategy_default(request) -> str | None:
+    """Pin new print groups to "fixed" (packed at generate) for this suite, and restore the setting afterwards.
+
+    Themis' shipped default is "pool": generate queues the group and each printer packs its own plate when it claims it, so
+    generate returns no jobs or files. The tests here cover the pack-at-generate pipeline (pack -> library file -> jobs ->
+    slice), so they say so explicitly. Yields the value found before pinning (None on a Themis that predates the setting,
+    which ignores the key and always packs at generate); `test_pool_groups.py` covers the pool path.
+    """
+    if not request.config.getoption("--integration", default=False):
+        yield None
+        return
+    s = authed_session()
+    url = f"{THEMIS_URL}/api/v1/settings/queue"
+    try:
+        before = s.get(url, timeout=10).json().get("default_group_strategy")
+        s.put(url, json={"default_group_strategy": "fixed"}, timeout=10).raise_for_status()
+    except Exception as exc:
+        pytest.skip(f"Themis not reachable for settings: {exc}")
+    yield before
+    if before is not None:
+        try:
+            s.put(url, json={"default_group_strategy": before}, timeout=10)
+        except Exception:
+            pass
+
+
 @pytest.fixture
 def project_id(http: requests.Session):
     resp = http.post(
