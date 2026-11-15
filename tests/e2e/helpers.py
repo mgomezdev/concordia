@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import os
 import struct
+from pathlib import Path
 
 import requests
 
@@ -42,6 +43,34 @@ def authed_session() -> requests.Session:
     if THEMIS_API_KEY:
         s.headers.update({"X-Api-Key": THEMIS_API_KEY})
     return s
+
+
+def ordinus_session() -> requests.Session:
+    """Sign in to the disposable Ordinus stack; retain its session cookie."""
+    s = requests.Session()
+    s.headers.update({"X-Ordinus-Request": "1"})
+    try:
+        status = s.get(f"{ORDINUS_URL}/api/v1/auth/session", timeout=10)
+        # Published images from before admin auth have no auth routes. Only an
+        # explicit 404 allows legacy mode; auth failures must never be ignored.
+        if status.status_code == 404:
+            return s
+        if status.status_code != 401:
+            status.raise_for_status()
+            raise RuntimeError("Expected an unauthenticated Ordinus session")
+        password = os.environ.get("ORDINUS_E2E_ADMIN_PASSWORD")
+        if not password:
+            password_file = Path(__file__).parents[2] / '.ordinus-admin-password'
+            if not password_file.is_file():
+                raise RuntimeError("Provision Ordinus with .ordinus-admin-password or set ORDINUS_E2E_ADMIN_PASSWORD")
+            password = password_file.read_text().rstrip("\r\n")
+        s.post(f"{ORDINUS_URL}/api/v1/auth/login",
+               json={"username": "admin", "password": password}, timeout=10).raise_for_status()
+        s.get(f"{ORDINUS_URL}/api/v1/auth/session", timeout=10).raise_for_status()
+        return s
+    except Exception:
+        s.close()
+        raise
 
 
 def _minimal_stl() -> bytes:

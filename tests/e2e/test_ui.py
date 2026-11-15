@@ -342,9 +342,19 @@ def test_queue_new_job_from_library(page_ready: Page, stl_file: int) -> None:
     page.wait_for_selector("text=Plate 1", timeout=8_000)
 
     # Select the placeholder printer.
-    centauri_btn = page.locator("text=Elegoo Centauri Carbon").first
-    if centauri_btn.is_visible(timeout=5_000):
-        centauri_btn.click()
+    # Themis >= BIZ-357: "+ Printer" opens a menu of menuitems; older builds show tiles.
+    printer_name = next(
+        p["name"] for p in _session.get(_api("/printers"), timeout=10).json()
+        if p["id"] == printer_id
+    )
+    plus = page.get_by_role("button", name="+ Printer")
+    if plus.count():
+        plus.first.click()
+        page.get_by_role("menuitem", name=re.compile(rf"^{re.escape(printer_name)}")).first.click()
+    else:
+        centauri_btn = page.locator("text=Elegoo Centauri Carbon").first
+        if centauri_btn.is_visible(timeout=5_000):
+            centauri_btn.click()
 
     # After selecting a printer, PerPrinterConfig fetches profiles asynchronously.
     # Wait for the select to appear, then wait for options to populate before selecting.
@@ -352,13 +362,14 @@ def test_queue_new_job_from_library(page_ready: Page, stl_file: int) -> None:
     if profile_select.is_visible(timeout=6_000):
         try:
             page.wait_for_function(
-                "() => (document.querySelector('[data-testid=\"print-profile-select\"]')?.options?.length ?? 0) > 1",
+                "(name) => [...(document.querySelector('[data-testid=\"print-profile-select\"]')?.options ?? [])].some(o => o.text.includes(name))",
+                arg=PROCESS_PROFILE,
                 timeout=8_000,
             )
             profile_select.select_option(PROCESS_PROFILE)
         except Exception:
             try:
-                profile_select.select_option(index=1)
+                profile_select.select_option(index=2)  # 0=placeholder, 1=Printer default
             except Exception:
                 pass
 
@@ -572,6 +583,13 @@ def test_project_create_via_ui(page_ready: Page, stl_file: int) -> None:
             name_input = page.locator("input").first
         name_input.fill(project_name)
 
+        # Themis >= BIZ-363: the builder opens on a Details tab and the file tree
+        # lives on the Items tab. Older builds show the tree straight away.
+        items_tab = page.get_by_role("tab", name=re.compile(r"^Items"))
+        new_builder = items_tab.count() > 0
+        if new_builder:
+            items_tab.first.click()
+
         # The left panel shows an "All files" folder tree; wait for it to load
         # then click the "Job Uploads" folder to filter to our uploaded STL.
         page.wait_for_selector("text=Job Uploads", timeout=NAV_TIMEOUT_MS)
@@ -586,20 +604,35 @@ def test_project_create_via_ui(page_ready: Page, stl_file: int) -> None:
             # Fallback: click the first non-folder button in the file list area
             page.locator("button").filter(has_text=".stl").first.click()
 
-        # develop's builder has a "Create…" action that opens a printer picker (confirm reads
-        # "Create" or "Create without dispatch"), generates jobs in place and stays on
-        # /projects/{id}/edit. The released image has no such action in the builder (its
-        # "Generate" lives on the project card), so skip there rather than fail.
-        create_btn = page.get_by_role("button", name="Create…", exact=True)
-        if not create_btn.is_visible(timeout=5_000):
-            pytest.skip("Builder has no 'Create…' action — Themis build predates it")
-        create_btn.click()
-        page.get_by_role("button", name=re.compile(r"^Create( without dispatch)?$")).click()
-        page.wait_for_url(re.compile(r"/projects/\d+"), timeout=30_000)
-
-        match = re.search(r"/projects/(\d+)", page.url)
-        if match:
-            project_id = int(match.group(1))
+        if new_builder:
+            # Save draft -> /projects/{id}/edit; targets set via API, then Review -> Queue.
+            page.get_by_role("button", name="Save draft").first.click()
+            page.wait_for_url(re.compile(r"/projects/\d+/edit"), timeout=30_000)
+            project_id = int(re.search(r"/projects/(\d+)", page.url).group(1))
+            groups = _session.get(_api(f"/projects/{project_id}/groups"), timeout=10).json()
+            gid = next(g["id"] for g in groups if g.get("is_default"))
+            _session.patch(
+                _api(f"/projects/{project_id}/groups/{gid}"),
+                json={"targets": [{"target_key": "any", "process_profile": PROCESS_PROFILE}]},
+                timeout=10,
+            ).raise_for_status()
+            page.get_by_role("tab", name=re.compile(r"^Review")).first.click()
+            queue_btn = page.get_by_role("button", name="Queue project")
+            expect(queue_btn).to_be_enabled(timeout=30_000)
+            queue_btn.click()
+            page.wait_for_selector("text=/jobs? added to queue/", timeout=30_000)
+        else:
+            # Pre-BIZ-363 builder: "Create…" opens a printer picker (confirm reads "Create" or
+            # "Create without dispatch"), generates jobs in place and stays on
+            # /projects/{id}/edit. The released image has no such action, so skip there.
+            create_btn = page.get_by_role("button", name="Create…", exact=True)
+            if not create_btn.is_visible(timeout=5_000):
+                pytest.skip("Builder has no 'Create…' action — Themis build predates it")
+            create_btn.click()
+            page.get_by_role("button", name=re.compile(r"^Create( without dispatch)?$")).click()
+            page.wait_for_url(re.compile(r"/projects/\d+"), timeout=30_000)
+            match = re.search(r"/projects/(\d+)", page.url)
+            project_id = int(match.group(1)) if match else None
         assert project_id, f"No project id in URL {page.url}"
 
         # Jobs are generated by the time the detail screen can list them.
