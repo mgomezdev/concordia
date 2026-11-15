@@ -1,0 +1,107 @@
+name: e2e (Themis + Laminus develop)
+
+# The service PR workflows each test one freshly built artifact against the
+# other service's released image. This workflow closes that gap by building
+# both branch heads from source and exercising their real OrcaSlicer coupling.
+
+on:
+  schedule:
+    - cron: "30 10 * * *" # nightly, after the published-image canary
+  workflow_dispatch:
+    inputs:
+      themis_ref:
+        description: Themis revision to build
+        type: string
+        default: develop
+      laminus_ref:
+        description: Laminus revision to build
+        type: string
+        default: develop
+      concordia_ref:
+        description: Concordia test-suite revision
+        type: string
+        default: main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.themis_ref || 'develop' }}-${{ inputs.laminus_ref || 'develop' }}
+  cancel-in-progress: false
+
+jobs:
+  e2e-develop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out Concordia
+        uses: actions/checkout@v4
+        with:
+          repository: mgomezdev/concordia
+          ref: ${{ inputs.concordia_ref || 'main' }}
+
+      - name: Check out Themis
+        uses: actions/checkout@v4
+        with:
+          repository: mgomezdev/themis
+          ref: ${{ inputs.themis_ref || 'develop' }}
+          path: .services/themis
+
+      - name: Check out Laminus
+        uses: actions/checkout@v4
+        with:
+          repository: mgomezdev/laminus
+          ref: ${{ inputs.laminus_ref || 'develop' }}
+          path: .services/laminus
+
+      - name: Record tested revisions
+        run: |
+          echo "Concordia $(git rev-parse HEAD)"
+          echo "Themis    $(git -C .services/themis rev-parse HEAD)"
+          echo "Laminus   $(git -C .services/laminus rev-parse HEAD)"
+
+      - name: Configure env
+        run: cp .env.example .env
+
+      - name: Read ORCA_VERSION for the AppImage cache key
+        run: echo "ORCA_VERSION=$(grep -oP '^ORCA_VERSION=\K.*' .env)" >> "$GITHUB_ENV"
+
+      - name: Restore OrcaSlicer AppImage cache
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/orcaslicer
+          key: orcaslicer-${{ env.ORCA_VERSION }}
+
+      - name: Build and start both develop services
+        env:
+          THEMIS_CONTEXT: .services/themis
+          LAMINUS_CONTEXT: .services/laminus
+        run: |
+          mkdir -p .ci-cache/orcaslicer
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.develop.yml \
+            up -d --build --wait laminus themis
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.develop.yml ps
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install test dependencies
+        run: pip install -r requirements-test.txt
+
+      - name: Install Playwright browser
+        run: playwright install --with-deps chromium
+
+      - name: Run develop coupling suite
+        env:
+          DEVELOP_STACK: "1"
+          LAMINUS_URL: http://localhost:5100
+        run: pytest tests/e2e/ --integration -m "integration and not ordinus" -v
+
+      - name: Dump service logs
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.develop.yml logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.develop.yml down -v

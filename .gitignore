@@ -1,11 +1,13 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.venv/
 .env
 .env.local
 .claude/
 # The e2e-full CI job's OrcaSlicer AppImage cache (docker-compose.ci.yml).
 .ci-cache/
+.services/
 
 # Internal business planning docs - not engineering documentation, keep local.
 docs/business/

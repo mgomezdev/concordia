@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 import requests
-from helpers import THEMIS_URL, _minimal_stl
+from helpers import PROCESS_PROFILE, THEMIS_URL, _find_centauri_placeholder_id, _minimal_stl
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
@@ -103,3 +103,40 @@ def test_project_job_list(
         assert not missing, f"job {job.get('id')} missing fields: {missing}"
         assert job["status"] == "queued", f"expected queued, got {job['status']!r}"
         assert job["file_name"] is not None, "file_name should not be None"
+
+
+@pytest.mark.integration
+@pytest.mark.develop
+def test_project_review_measures_stl_through_laminus(
+    http: requests.Session,
+    stl_file_id: int,
+    project_id: int,
+) -> None:
+    """Exercise Themis develop's project review against Laminus develop's measure API."""
+    printer_id = _find_centauri_placeholder_id(http)
+    assert printer_id is not None, "seeded Centauri placeholder is missing"
+
+    item = http.post(
+        f"{THEMIS_URL}/api/v1/projects/{project_id}/items",
+        json={"file_id": stl_file_id, "quantity": 1},
+        timeout=10,
+    )
+    assert item.status_code == 201, f"add item failed: {item.status_code} {item.text}"
+
+    groups = http.get(f"{THEMIS_URL}/api/v1/projects/{project_id}/groups", timeout=10)
+    groups.raise_for_status()
+    default_group = next(group for group in groups.json() if group["is_default"])
+    target = http.patch(
+        f"{THEMIS_URL}/api/v1/projects/{project_id}/groups/{default_group['id']}",
+        json={"targets": [{"target_key": str(printer_id), "process_profile": PROCESS_PROFILE}]},
+        timeout=10,
+    )
+    target.raise_for_status()
+
+    review = http.get(f"{THEMIS_URL}/api/v1/projects/{project_id}/review", timeout=30)
+    assert review.status_code == 200, f"review failed: {review.status_code} {review.text}"
+    messages = [check["message"] for check in review.json()["checks"]]
+    assert not any("size is unknown" in message for message in messages), messages
+    assert any("every measured part fits" in message.lower() for message in messages), (
+        f"Themis did not use a successful Laminus /api/v1/projects/measure response: {messages}"
+    )

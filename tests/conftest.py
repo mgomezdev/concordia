@@ -46,6 +46,10 @@ def pytest_configure(config):
         "ordinus: needs the Ordinus container; deselect with -m 'not ordinus' "
         "when running the `core` compose profile",
     )
+    config.addinivalue_line(
+        "markers",
+        "develop: contract requires the source-built Themis + Laminus develop stack",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -53,4 +57,10 @@ def pytest_collection_modifyitems(config, items):
         skip = pytest.mark.skip(reason="pass --integration to run")
         for item in items:
             if "integration" in item.keywords:
+                item.add_marker(skip)
+
+    if not os.environ.get("DEVELOP_STACK"):
+        skip = pytest.mark.skip(reason="requires DEVELOP_STACK=1 with both develop services")
+        for item in items:
+            if "develop" in item.keywords:
                 item.add_marker(skip)
