@@ -1,0 +1,20 @@
+# Build the coupled services from source instead of testing one branch artifact
+# against the other service's released image.
+#
+# Local defaults expect sibling checkouts. CI points the contexts at the
+# checkouts under .services/ with THEMIS_CONTEXT and LAMINUS_CONTEXT.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.ci.yml \
+#     -f docker-compose.develop.yml up -d --build --wait laminus themis
+
+services:
+  laminus:
+    image: concordia/laminus:develop
+    build:
+      context: ${LAMINUS_CONTEXT:-../laminus}
+
+  themis:
+    image: concordia/themis:develop
+    build:
+      context: ${THEMIS_CONTEXT:-../themis}
