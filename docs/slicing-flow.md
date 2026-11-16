@@ -114,7 +114,7 @@ sequenceDiagram
         QE->>DB: job.status = "slicing"
         QE->>DB: commit
 
-        note over QE: Build SliceRequest:<br/>• source_3mf (uploaded file path)<br/>• machine_preset (printer's orca profile name)<br/>• process_preset (print profile name)<br/>• filament_presets (filament profile name(s))<br/>• plate_number<br/>• extra_config { curr_bed_type < printer.slice_overrides < 3MF's own changes < job.overrides }<br/>• export_args (printer-specific, e.g. --export-3mf)
+        note over QE: Build SliceRequest:<br/>• source_3mf (uploaded file path)<br/>• machine_preset (printer's orca profile name)<br/>• process_preset (print profile name)<br/>• filament_presets (filament profile name(s))<br/>• plate_number<br/>• extra_config { curr_bed_type, job + per-target overrides }<br/>• printer_overrides { printer.slice_overrides }<br/>(the Laminus producer adds the 3MF's own changes: printer < 3MF < job)<br/>• export_args (printer-specific, e.g. --export-3mf)
 
         QE->>QE: asyncio.get_running_loop().run_in_executor(<br/>  ThreadPoolExecutor, slicer.slice, req<br/>)
     end
@@ -338,7 +338,7 @@ flowchart TD
 | Themis never reads profile JSON files | `slicer_service.py` — no file imports |
 | All profile data comes from `GET /api/v1/profiles` | `LaminusSidecarClient.get_catalog()` |
 | Profile catalog cached 300 s | `SlicerService._CATALOG_TTL = 300.0` |
-| `extra_config` (bed type < printer overrides < the 3MF's own process changes < job overrides, merged by Themis `services/slice_overrides`) applied **after** profile resolution, so the 3MF's changes land on the routed printer's preset | Sidecar `start_slice` handler |
+| `extra_config` (bed type < printer overrides < the 3MF's own process changes < job overrides, merged by Themis' Laminus producer `providers/laminus/producer.py`) applied **after** profile resolution, so the 3MF's changes land on the routed printer's preset | Sidecar `start_slice` handler |
 | Inheritance flattened once at catalog build time | `ProfileCatalog` on sidecar startup |
 | UUIDs are stable across restarts | UUID5 from deterministic inputs |
 | Sidecar unavailable → hard failure, no local fallback | `SlicerService.slice()` line 1 |
