@@ -613,7 +613,7 @@ def test_project_create_via_ui(page_ready: Page, stl_file: int) -> None:
             gid = next(g["id"] for g in groups if g.get("is_default"))
             _session.patch(
                 _api(f"/projects/{project_id}/groups/{gid}"),
-                json={"targets": [{"target_key": "any", "process_profile": PROCESS_PROFILE}]},
+                json={"strategy": "fixed", "targets": [{"target_key": "any", "process_profile": PROCESS_PROFILE}]},
                 timeout=10,
             ).raise_for_status()
             page.get_by_role("tab", name=re.compile(r"^Review")).first.click()
