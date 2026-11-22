@@ -131,7 +131,7 @@ E2E tests target a running stack. The `conftest.py` session fixture seeds known 
 pytest tests/e2e/test_centauri_slice.py --integration
 pytest tests/e2e/test_ordinus_themis_integration.py --integration
 
-# Run all integration tests
+# Run the integration suite
 pytest tests/e2e/ --integration
 
 # Override service URLs (defaults match .env):
@@ -169,6 +169,21 @@ Tests the Ordinus → Themis bidirectional integration:
 ### test_project_jobs.py / test_ui.py
 
 Additional Themis tests: job lifecycle via API, and Playwright-driven UI interaction tests.
+
+### Live journeys
+
+Run the mixed-file project journeys against disposable Themis and Laminus
+instances with real OrcaSlicer. Set `THEMIS_URL`, `LAMINUS_URL` and the test
+stack's `THEMIS_BOOTSTRAP_KEY` in the environment before running.
+
+```bash
+pytest tests/e2e/live/ --integration --live -v
+```
+
+The mixed-file cases exercise fixed and pooled groups, STL and 3MF models, and
+pre-sliced G-code in both formats. They use offline printer records. The CI
+workflows omit `--live`, which deselects these journeys even when CI uses real
+services.
 
 ---
 

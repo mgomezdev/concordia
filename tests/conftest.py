@@ -30,9 +30,15 @@ def pytest_addoption(parser):
         default=False,
         help="Run integration tests (requires live Docker stack)",
     )
+    parser.addoption(
+        "--live",
+        action="store_true",
+        help="Include opt-in journeys for the real-service stack",
+    )
 
 
 def pytest_configure(config):
+    config.addinivalue_line("markers", "live: opt-in journey excluded from CI checks")
     config.addinivalue_line(
         "markers",
         "integration: requires the full Concordia Docker stack to be running",
@@ -53,6 +59,12 @@ def pytest_configure(config):
 
 
 def pytest_collection_modifyitems(config, items):
+    if not config.getoption("--live"):
+        deselected = [item for item in items if "live" in item.keywords]
+        if deselected:
+            items[:] = [item for item in items if "live" not in item.keywords]
+            config.hook.pytest_deselected(items=deselected)
+
     if not config.getoption("--integration"):
         skip = pytest.mark.skip(reason="pass --integration to run")
         for item in items:
