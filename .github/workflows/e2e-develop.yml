@@ -95,6 +95,7 @@ jobs:
       - name: Run develop coupling suite
         env:
           DEVELOP_STACK: "1"
+          CONCORDIA_REAL_STACK: "1"
           LAMINUS_URL: http://localhost:5100
         run: pytest tests/e2e/ --integration -m "integration and not ordinus" -v
 

@@ -50,6 +50,10 @@ def pytest_configure(config):
         "markers",
         "develop: contract requires the source-built Themis + Laminus develop stack",
     )
+    config.addinivalue_line(
+        "markers",
+        "real_stack: requires the real-service Concordia stack and OrcaSlicer",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -63,4 +67,10 @@ def pytest_collection_modifyitems(config, items):
         skip = pytest.mark.skip(reason="requires DEVELOP_STACK=1 with both develop services")
         for item in items:
             if "develop" in item.keywords:
+                item.add_marker(skip)
+
+    if os.environ.get("CONCORDIA_REAL_STACK") != "1":
+        skip = pytest.mark.skip(reason="requires CONCORDIA_REAL_STACK=1 with real services")
+        for item in items:
+            if "real_stack" in item.keywords:
                 item.add_marker(skip)

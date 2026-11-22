@@ -172,6 +172,7 @@ jobs:
       # slicing pipeline and the Ordinus edge together, against real OrcaSlicer.
       - name: Run full e2e suite
         env:
+          CONCORDIA_REAL_STACK: "1"
           # Real Laminus here, not the test stack's mock-laminus.
           ORDINUS_LAMINUS_URL: http://laminus:5000
         run: pytest tests/e2e/ --integration -m integration -v
