@@ -134,9 +134,24 @@ pytest tests/e2e/test_ordinus_themis_integration.py --integration
 # Run all integration tests
 pytest tests/e2e/ --integration
 
+# Include the real-only journeys on a disposable full stack.
+CONCORDIA_REAL_STACK=1 ORDINUS_LAMINUS_URL=http://laminus:5000 pytest tests/e2e/ --integration
+
 # Override service URLs (defaults match .env):
 THEMIS_URL=http://localhost:8001 ORDINUS_URL=http://localhost:3002 pytest tests/e2e/ --integration
 ```
+
+The real-only journeys exercise an Ordinus browser handoff to Themis and verify
+that real OrcaSlicer produces one plate at a time for 180, 256, and 350 mm beds,
+with matching 3MF manifests and no extra or lost instances. The browser handoff
+uses `ORDINUS_THEMIS_URL` inside Docker and `THEMIS_URL` for browser access.
+
+To include the physical Elegoo Centauri Carbon scan and camera journey, set
+`CONCORDIA_CAMERA_PRINTER_IP` to one printer reachable from the isolated Themis
+container and run it first on a fresh test stack with an empty queue. The test
+adds a temporary registration, disables its queue assignment, and removes it
+after checking a camera snapshot. It does not start a print. CI runs without a
+physical printer by default.
 
 ### Test data seeding
 

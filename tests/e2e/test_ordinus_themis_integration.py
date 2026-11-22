@@ -25,9 +25,12 @@ from __future__ import annotations
 
 import time
 from typing import Any
+from urllib.parse import urlparse
+from uuid import uuid4
 
 import pytest
 import requests
+from playwright.sync_api import Page, expect
 from helpers import (
     FILAMENT_PROFILE,
     MACHINE_PROFILE,
@@ -35,6 +38,7 @@ from helpers import (
     ORDINUS_THEMIS_URL,
     ORDINUS_URL,
     PROCESS_PROFILE,
+    THEMIS_API_KEY,
     THEMIS_URL,
     _drain_active_jobs_for_printer,
     _find_centauri_placeholder_id,
@@ -188,6 +192,55 @@ def library_item(ordinus: requests.Session) -> tuple[str, dict[str, Any]]:
 
 
 # -- tests --------------------------------------------------------------------
+
+@pytest.mark.integration
+@pytest.mark.real_stack
+def test_ordinus_bom_browser_handoff_to_themis(
+    page: Page,
+    ordinus: requests.Session,
+    themis: requests.Session,
+    library_item: tuple[str, dict[str, Any]],
+    request: pytest.FixtureRequest,
+) -> None:
+    """Generate a BOM in the Ordinus UI, send it, and open the resulting Themis project."""
+    lib_id, item = library_item
+    layout_name = f"E2E Browser Handoff {uuid4().hex[:8]}"
+    layout_id = _create_layout(ordinus, layout_name, lib_id, item, quantity=2)
+    request.addfinalizer(lambda: ordinus.delete(f"{ORDINUS_URL}/api/v1/layouts/{layout_id}", timeout=10).raise_for_status())
+    assert ordinus.cookies, "The real-stack journey requires an authenticated Ordinus admin"
+    page.context.add_cookies([
+        {"name": cookie.name, "value": cookie.value, "url": ORDINUS_URL}
+        for cookie in ordinus.cookies
+    ])
+    page.add_init_script("localStorage.setItem('gridfinity-walkthrough-seen', 'true');")
+    page.goto(f"{ORDINUS_URL}/configs")
+    card = page.locator(".saved-config-card").filter(has_text=layout_name)
+    card.get_by_role("button", name="Edit", exact=True).click()
+    expect(page.locator(".canvas-breadcrumb-current")).to_contain_text(layout_name)
+    page.locator(".nav-tab").filter(has_text="BOM").click()
+    panel = page.locator(".bom-generation-panel")
+    panel.get_by_role("button", name="Generate", exact=True).click()
+    expect(panel.get_by_role("button", name="Download 3MF")).to_be_enabled(timeout=BOM_TIMEOUT_S * 1000)
+    panel.get_by_role("button", name="Send to Themis").click()
+    link = panel.get_by_role("link", name="Open in Themis")
+    expect(link).to_be_visible(timeout=30_000)
+    target = urlparse(link.get_attribute("href"))
+    expected_origin = urlparse(ORDINUS_THEMIS_URL)
+    assert (target.scheme, target.netloc) == (expected_origin.scheme, expected_origin.netloc)
+    assert target.path.startswith("/projects/")
+    project_id = int(target.path.rsplit("/", 1)[-1])
+    request.addfinalizer(lambda: themis.delete(f"{THEMIS_URL}/api/v1/projects/{project_id}", timeout=10).raise_for_status())
+
+    project = _themis_project(project_id)
+    assert project["source_app"] == "ordinus" and project["source_layout_id"] == layout_id
+    assert project["items"], "The transferred project must contain printable parts"
+    # Ordinus uses the Docker hostname. Use the same project path on the browser-facing origin.
+    themis_page = page.context.new_page()
+    if THEMIS_API_KEY:
+        themis_page.add_init_script(f"localStorage.setItem('themis.apiKey', {THEMIS_API_KEY!r});")
+    themis_page.goto(f"{THEMIS_URL}{target.path}")
+    expect(themis_page.get_by_role("heading", name=layout_name, exact=True, level=2)).to_be_visible()
+
 
 @pytest.mark.integration
 def test_send_to_themis_source_fields_and_bidirectional_link(
