@@ -7,6 +7,7 @@ name: e2e (Themis + Laminus develop)
 on:
   pull_request:
     branches: [develop]
+    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: "30 10 * * *" # nightly, after the published-image canary
   workflow_dispatch:
@@ -23,6 +24,10 @@ on:
         description: Concordia test-suite revision
         type: string
         default: main
+      acceptance_only:
+        description: Run only the real OrcaSlicer print-group acceptance cases
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.themis_ref || 'develop' }}-${{ inputs.laminus_ref || 'develop' }}
@@ -98,7 +103,7 @@ jobs:
         run: pip install -r requirements-test.txt
 
       - name: Install Playwright browser
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && !inputs.acceptance_only
         run: playwright install --with-deps chromium
 
       - name: Run the three real OrcaSlicer print-group acceptance cases
@@ -106,19 +111,19 @@ jobs:
           DEVELOP_STACK: "1"
           LAMINUS_URL: http://localhost:5100
         run: |
-          pytest tests/e2e/test_real_orca_print_groups.py --integration --strict-markers -v -s \
+          pytest tests/e2e/test_real_orca_print_groups.py --integration --strict-markers -v -s -ra \
             --junitxml=real-orca-acceptance.xml
           python - <<'PY'
           from xml.etree.ElementTree import parse
 
           cases = parse("real-orca-acceptance.xml").findall(".//testcase")
-          assert len(cases) == 3 and all(len(case) == 0 for case in cases), [
-              (case.attrib["name"], [outcome.tag for outcome in case]) for case in cases
-          ]
+          unfinished = [case.attrib["name"] for case in cases
+                        if any(outcome.tag in {"skipped", "failure", "error"} for outcome in case)]
+          assert len(cases) == 3 and not unfinished, (len(cases), unfinished)
           PY
 
       - name: Run develop coupling suite
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && !inputs.acceptance_only
         env:
           DEVELOP_STACK: "1"
           LAMINUS_URL: http://localhost:5100

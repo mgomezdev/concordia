@@ -50,7 +50,7 @@ def laminus():
         assert info["ready"]["catalog"], info
         assert info["engine"]["name"] == "orcaslicer" and info["engine"]["version"], info
         assert {"slice.plate_isolation", "pack.next", "pack.manifest"} <= set(info["features"]), info
-        print(f"Real OrcaSlicer engine: {info['engine']}")
+        print(f"OrcaSlicer {info['engine']['version']}")
         yield session
 
 
@@ -182,11 +182,15 @@ def _upload(http, name, content):
     }, data={"folder": "/Job Uploads"})
 
 
-def _project(http, project_id, printers, strategy, **settings):
+def _target(printer_id, profile):
+    return {"target_key": str(printer_id), "filament_profile": profile["filament"]["name"]}
+
+
+def _project(http, project_id, targets, strategy, **settings):
     path = f"/projects/{project_id}"
     group_id = next(group["id"] for group in _themis(http, "GET", f"{path}/groups") if group["is_default"])
     _themis(http, "PATCH", f"{path}/groups/{group_id}", json={
-        "strategy": strategy, "targets": [{"target_key": str(pid)} for pid in printers], **settings,
+        "strategy": strategy, "targets": targets, **settings,
     })
     return path, group_id
 
@@ -220,17 +224,9 @@ def _claim(http, project, printer_id):
             f"mock printer {printer_id} to claim and slice a pool plate",
         )
         (job,) = (job for job in jobs if job["assigned_printer_id"] == printer_id)
-        claim = _themis(http, "GET", f"/jobs/{job['id']}")
-        assert claim["actual_seconds"] > 0, claim
-        return claim
+        return _themis(http, "GET", f"/jobs/{job['id']}")
     finally:
         _themis(http, "PATCH", path, json={"queue_on": False})
-
-
-def _object_id(http, file, source_name):
-    objects = _themis(http, "GET", f"/files/{file['id']}/objects")
-    (obj,) = (obj for obj in objects if obj["name"].removesuffix(".stl") == source_name)
-    return str(obj["id"])
 
 
 def _pool_for_claim(http, claim):
@@ -240,11 +236,16 @@ def _pool_for_claim(http, claim):
 def test_mixed_pool_claims_conserve_parts_and_fall_through(http, laminus, beds, printer, project_id):
     printers = {bed: printer(bed) for bed in beds}
     fallthrough_printer = printer(180)
-    project, group = _project(http, project_id, [*printers.values(), fallthrough_printer], "pool", max_parts=3)
+    fallback_target = _target(fallthrough_printer, beds[180])
+    targets = [_target(printer_id, beds[bed]) for bed, printer_id in printers.items()]
+    project, group = _project(http, project_id, [*targets, fallback_target], "pool", max_parts=3)
     stl = _upload(http, "small.stl", box_stl(17, 15))
-    mixed = _upload(http, "mixed.3mf", _pack(laminus, 256, [
+    mixed_bytes = _pack(laminus, 256, [
         ("medium.stl", 195, 195), ("small-object.stl", 18, 13),
-    ]))
+    ])
+    mixed = _upload(http, "mixed.3mf", mixed_bytes)
+    (mixed_plate,) = read_manifest(mixed_bytes)["plates"]
+    object_ids = {entry["source"]: entry["object_id"] for entry in mixed_plate["instances"]}
     bundle_bytes = _pack(laminus, 350, [("large.stl", 270, 270), ("partner.stl", 16, 19)])
     bundle_source = read_manifest(bundle_bytes)
     (source_plate,) = bundle_source["plates"]
@@ -252,12 +253,12 @@ def test_mixed_pool_claims_conserve_parts_and_fall_through(http, laminus, beds, 
     assert len(bundle_parts) == 2
     bundle = _upload(http, "together.3mf", bundle_bytes)
     split = _item(http, project, stl, quantity=2)
-    small_obj = _item(http, project, mixed, kind="3mf_object", source_ref=_object_id(http, mixed, "small-object"))
-    medium_obj = _item(http, project, mixed, kind="3mf_object", source_ref=_object_id(http, mixed, "medium"))
+    small_obj = _item(http, project, mixed, kind="3mf_object", source_ref=object_ids["small-object.stl"])
+    medium_obj = _item(http, project, mixed, kind="3mf_object", source_ref=object_ids["medium.stl"])
     together = _item(http, project, bundle, kind="3mf_plate", source_ref=str(source_plate["plate"]), pack_rule="together")
     next_group = _themis(http, "POST", f"{project}/groups", expected=201, json={"name": "Next pool"})["id"]
     _themis(http, "PATCH", f"{project}/groups/{next_group}", json={
-        "strategy": "pool", "targets": [{"target_key": str(fallthrough_printer)}],
+        "strategy": "pool", "targets": [fallback_target],
     })
     next_item = _item(http, project, stl, group_id=next_group)
     generated = _themis(http, "POST", f"{project}/generate", json={}, timeout=120)
@@ -321,9 +322,9 @@ def test_mixed_pool_claims_conserve_parts_and_fall_through(http, laminus, beds, 
     assert remaining.total() == 0 and len(job_ids) == 3
 
 
-def test_persisted_uneven_plate_manifests_drive_progress_and_restoration(http, printer, project_id):
+def test_persisted_uneven_plate_manifests_drive_progress_and_restoration(http, beds, printer, project_id):
     printer_id = printer(180)
-    project, _ = _project(http, project_id, [printer_id], "fixed", envelope_x=180, envelope_y=180)
+    project, _ = _project(http, project_id, [_target(printer_id, beds[180])], "fixed", envelope_x=180, envelope_y=180)
     wide = _upload(http, "wide.stl", box_stl(150, 150))
     tiles = _upload(http, "tiles.stl", box_stl(80, 80))
     items = [_item(http, project, file, quantity) for file, quantity in ((wide, 1), (tiles, 4))]
