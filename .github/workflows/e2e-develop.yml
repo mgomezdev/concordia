@@ -5,6 +5,9 @@ name: e2e (Themis + Laminus develop)
 # both branch heads from source and exercising their real OrcaSlicer coupling.
 
 on:
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: "30 10 * * *" # nightly, after the published-image canary
   workflow_dispatch:
@@ -21,9 +24,13 @@ on:
         description: Concordia test-suite revision
         type: string
         default: main
+      acceptance_only:
+        description: Run only the real OrcaSlicer print-group acceptance cases
+        type: boolean
+        default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.themis_ref || 'develop' }}-${{ inputs.laminus_ref || 'develop' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.themis_ref || 'develop' }}-${{ inputs.laminus_ref || 'develop' }}
   cancel-in-progress: false
 
 jobs:
@@ -36,7 +43,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: mgomezdev/concordia
-          ref: ${{ inputs.concordia_ref || 'main' }}
+          ref: ${{ inputs.concordia_ref || github.event.pull_request.head.sha || 'main' }}
 
       - name: Check out Themis
         uses: actions/checkout@v4
@@ -61,8 +68,12 @@ jobs:
       - name: Configure env
         run: cp .env.example .env
 
-      - name: Read ORCA_VERSION for the AppImage cache key
-        run: echo "ORCA_VERSION=$(grep -oP '^ORCA_VERSION=\K.*' .env)" >> "$GITHUB_ENV"
+      - name: Select the engine version from the Laminus source revision
+        run: |
+          version=$(sed -nE 's/^ENV ORCA_VERSION=([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' .services/laminus/Dockerfile)
+          test -n "$version"
+          echo "ORCA_VERSION=$version" >> "$GITHUB_ENV"
+          echo "OrcaSlicer $version"
 
       - name: Restore OrcaSlicer AppImage cache
         uses: actions/cache@v4
@@ -79,6 +90,8 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.develop.yml \
             up -d --build --wait laminus themis
           docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.develop.yml ps
+          docker inspect --format '{{.Name}} {{.Image}}' $(docker compose \
+            -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.develop.yml ps -q laminus themis)
 
       - uses: actions/setup-python@v5
         with:
@@ -90,13 +103,31 @@ jobs:
         run: pip install -r requirements-test.txt
 
       - name: Install Playwright browser
+        if: github.event_name != 'pull_request' && !inputs.acceptance_only
         run: playwright install --with-deps chromium
 
-      - name: Run develop coupling suite
+      - name: Run the three real OrcaSlicer print-group acceptance cases
         env:
           DEVELOP_STACK: "1"
           LAMINUS_URL: http://localhost:5100
-        run: pytest tests/e2e/ --integration -m "integration and not ordinus" -v
+        run: |
+          pytest tests/e2e/test_real_orca_print_groups.py --integration --strict-markers -v -s -ra \
+            --junitxml=real-orca-acceptance.xml
+          python - <<'PY'
+          from xml.etree.ElementTree import parse
+
+          cases = parse("real-orca-acceptance.xml").findall(".//testcase")
+          unfinished = [case.attrib["name"] for case in cases
+                        if any(outcome.tag in {"skipped", "failure", "error"} for outcome in case)]
+          assert len(cases) == 3 and not unfinished, (len(cases), unfinished)
+          PY
+
+      - name: Run develop coupling suite
+        if: github.event_name != 'pull_request' && !inputs.acceptance_only
+        env:
+          DEVELOP_STACK: "1"
+          LAMINUS_URL: http://localhost:5100
+        run: pytest tests/e2e/ --integration -m "integration and not ordinus" -v --ignore=tests/e2e/test_real_orca_print_groups.py
 
       - name: Dump service logs
         if: failure()
