@@ -41,7 +41,7 @@ def stl_file_id(http: requests.Session):
 def test_project_job_list(
     http: requests.Session,
     stl_file_id: int,
-    project_id: int,
+    fixed_project_id: int,
 ) -> None:
     """
     Full project → generate → job list round trip:
@@ -49,6 +49,7 @@ def test_project_job_list(
       2. Generate with no eligible printers (geometry-only pack, 256×256×250mm bed).
       3. GET /api/v1/projects/{id}/jobs returns a list with the expected fields.
     """
+    project_id = fixed_project_id
     # 0. Purge any stale items / jobs left by a previous run (FK was off, so orphans survive)
     existing = http.get(f"{THEMIS_URL}/api/v1/projects/{project_id}/items", timeout=10)
     for item in (existing.json() if existing.ok else []):

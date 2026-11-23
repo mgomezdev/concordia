@@ -68,7 +68,7 @@ def uploaded_file_id(http: requests.Session) -> int:
 def test_centauri_slice_reaches_sliced_status(
     http: requests.Session,
     uploaded_file_id: int,
-    project_id: int,
+    fixed_project_id: int,
 ) -> None:
     """
     Full slice pipeline for the Elegoo Centauri Carbon placeholder:
@@ -76,6 +76,7 @@ def test_centauri_slice_reaches_sliced_status(
       2. Create a job against the 3MF with explicit Centauri profiles
       3. verify-slice: queued → slicing → sliced  (no upload, printer is offline)
     """
+    project_id = fixed_project_id
     printer_id = _find_centauri_placeholder_id(http)
     if printer_id is None:
         pytest.fail("Placeholder Elegoo Centauri Carbon printer not found — is Themis seeding it?")

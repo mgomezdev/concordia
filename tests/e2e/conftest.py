@@ -74,3 +74,20 @@ def project_id(http: requests.Session):
         http.delete(f"{THEMIS_URL}/api/v1/projects/{pid}", timeout=10)
     except Exception:
         pass
+
+
+@pytest.fixture
+def fixed_project_id(http: requests.Session, project_id: int) -> int:
+    """Use immediate packing for tests that expect generate to create jobs or files."""
+    response = http.get(f"{THEMIS_URL}/api/v1/projects/{project_id}/groups", timeout=10)
+    if response.status_code == 404:
+        # Releases before print groups always pack immediately.
+        return project_id
+    response.raise_for_status()
+    group_id = next(group["id"] for group in response.json() if group["is_default"])
+    http.patch(
+        f"{THEMIS_URL}/api/v1/projects/{project_id}/groups/{group_id}",
+        json={"strategy": "fixed"},
+        timeout=10,
+    ).raise_for_status()
+    return project_id
