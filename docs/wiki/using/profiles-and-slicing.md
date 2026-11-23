@@ -107,7 +107,7 @@ permanent fork — the vendor profile is going away, or you need to diverge for 
 Set `ORCA_VERSION` in `.env` and restart:
 
 ```ini
-ORCA_VERSION=2.4.2
+ORCA_VERSION=2.5.1
 ```
 
 The entrypoint notices the mismatch, downloads the new AppImage, and replaces the cached

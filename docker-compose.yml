@@ -29,7 +29,7 @@ services:
     environment:
       - TZ=Etc/UTC
       - PYTHONUNBUFFERED=1
-      - ORCA_VERSION=${ORCA_VERSION:-2.4.2}
+      - ORCA_VERSION=${ORCA_VERSION:-2.5.1}
     healthcheck:
       # A bare `curl -f /api/v1/health` always returns 200 once uvicorn binds --
       # by design, /api/v1/health reports catalog readiness as the `catalog_loaded`
