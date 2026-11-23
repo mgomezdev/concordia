@@ -80,9 +80,11 @@ def _api(path: str) -> str:
 def _upload_stl_via_api(name: str | None = None) -> int:
     """Upload a minimal STL to Job Uploads and return its file ID."""
     name = name or _uniq("ui-test") + ".stl"
+    # Give each upload its own content hash while leaving the STL geometry unchanged.
+    content = name.encode()[:80].ljust(80, b" ") + _minimal_stl()[80:]
     r = _session.post(
         _api("/files/upload"),
-        files={"file": (name, _minimal_stl(), "application/octet-stream")},
+        files={"file": (name, content, "application/octet-stream")},
         data={"folder": "/Job Uploads"},
         timeout=20,
     )
@@ -145,9 +147,14 @@ def page_ready(page: Page, alive) -> Page:  # noqa: ARG001
 
 
 @pytest.fixture()
-def stl_file(alive) -> Generator[int, None, None]:
+def stl_name() -> str:
+    return _uniq("ui-test") + ".stl"
+
+
+@pytest.fixture()
+def stl_file(alive, stl_name: str) -> Generator[int, None, None]:
     """Upload a test STL before the test and delete it after."""
-    fid = _upload_stl_via_api()
+    fid = _upload_stl_via_api(stl_name)
     yield fid
     _delete_file_via_api(fid)
 
@@ -559,7 +566,7 @@ def test_projects_list_renders(page_ready: Page) -> None:
 
 
 @pytest.mark.integration
-def test_project_create_via_ui(page_ready: Page, stl_file: int) -> None:
+def test_project_create_via_ui(page_ready: Page, stl_file: int, stl_name: str) -> None:
     """
     Create a project through the builder UI: name it, add a file item, generate
     (geometry-only — no eligible printers), then verify jobs appear on the
@@ -596,13 +603,10 @@ def test_project_create_via_ui(page_ready: Page, stl_file: int) -> None:
         page.click("text=Job Uploads")
         page.wait_for_load_state("networkidle", timeout=5_000)
 
-        # File buttons appear with title "Add <filename>" — click the first one.
-        file_btn = page.locator("button[title^='Add']").first
-        if file_btn.is_visible(timeout=5_000):
-            file_btn.click()
-        else:
-            # Fallback: click the first non-folder button in the file list area
-            page.locator("button").filter(has_text=".stl").first.click()
+        # Earlier builders use the visible filename instead of an Add tooltip.
+        page.get_by_title(f"Add {stl_name}", exact=True).or_(
+            page.get_by_role("button", name=stl_name, exact=True)
+        ).first.click()
 
         if new_builder:
             # Save draft -> /projects/{id}/edit; targets set via API, then Review -> Queue.
