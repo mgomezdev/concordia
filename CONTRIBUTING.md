@@ -103,7 +103,7 @@ Defined in `.env` (copy from `.env.example`):
 |---|---|---|
 | `HOST_PORT` | `8001` | Host port for Themis |
 | `ORDINUS_PORT` | `3002` | Host port for Ordinus |
-| `ORCA_VERSION` | `2.4.1` | OrcaSlicer AppImage version for Laminus |
+| `ORCA_VERSION` | `2.5.1` | OrcaSlicer AppImage version for Laminus |
 
 Laminus passes `ORCA_VERSION` to its entrypoint script, which downloads the matching AppImage if not already in the `laminus-slicer` named volume.
 

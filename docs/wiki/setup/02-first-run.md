@@ -38,7 +38,7 @@ Now open `.env` in any text editor (Notepad is fine) and review it:
 
 ```ini
 HOST_PORT=8001
-ORCA_VERSION=2.4.2
+ORCA_VERSION=2.5.1
 ORDINUS_PORT=3002
 THEMIS_BOOTSTRAP_KEY=dev-e2e-bootstrap-key
 CORS_ORIGIN=*

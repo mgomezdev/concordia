@@ -12,7 +12,7 @@ Copy `.env.example` → `.env`. Docker Compose reads `.env` automatically.
 |---|---|---|
 | `HOST_PORT` | `8001` | Host port for the Themis UI and API. Container side is always 8000. |
 | `ORDINUS_PORT` | `3002` | Host port for Ordinus. Container side is 80. |
-| `ORCA_VERSION` | `2.4.2` | OrcaSlicer version Laminus installs. Change + restart to upgrade. |
+| `ORCA_VERSION` | `2.5.1` | OrcaSlicer version Laminus installs. Change + restart to upgrade. |
 | `THEMIS_BOOTSTRAP_KEY` | *(unset)* | Break-glass full-scope API key, always accepted. **Set this.** |
 | `CORS_ORIGIN` | `*` | Which origins may call the Ordinus API. |
 

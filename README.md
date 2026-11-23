@@ -96,7 +96,7 @@ Copy `.env.example` to `.env` and adjust as needed:
 |---|---|---|
 | `HOST_PORT` | `8001` | Host port for Themis |
 | `ORDINUS_PORT` | `3002` | Host port for Ordinus |
-| `ORCA_VERSION` | `2.4.2` | OrcaSlicer AppImage version Laminus downloads |
+| `ORCA_VERSION` | `2.5.1` | OrcaSlicer AppImage version Laminus downloads |
 | `THEMIS_BOOTSTRAP_KEY` | *(none)* | Fixed full-scope API key — recovery path if you lock yourself out of Themis's auth system |
 | `CORS_ORIGIN` | `*` | CORS origin Ordinus allows |
 
